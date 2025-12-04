@@ -1,0 +1,15 @@
+crewai
+graphiti-core
+neo4j
+fastapi
+uvicorn
+python-dotenv
+google-generativeai
+typer
+requests
+groq
+langchain-groq>=0.2.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+
+

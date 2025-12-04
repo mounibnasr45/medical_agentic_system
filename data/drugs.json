@@ -1,0 +1,60 @@
+[
+  {
+    "name": "Warfarin",
+    "description": "Warfarin is an anticoagulant (blood thinner). It reduces the formation of blood clots.",
+    "interactions": [
+      {
+        "drug": "Aspirin",
+        "severity": "Major",
+        "effect": "Increased risk of bleeding."
+      },
+      {
+        "drug": "Ibuprofen",
+        "severity": "Major",
+        "effect": "Increased risk of bleeding."
+      }
+    ],
+    "contraindications": [
+      "Active bleeding",
+      "Pregnancy"
+    ]
+  },
+  {
+    "name": "Aspirin",
+    "description": "Aspirin is a salicylate used to reduce fever, pain, and inflammation.",
+    "interactions": [
+      {
+        "drug": "Warfarin",
+        "severity": "Major",
+        "effect": "Increased risk of bleeding."
+      }
+    ],
+    "contraindications": [
+      "Bleeding disorders",
+      "Stomach ulcers"
+    ]
+  },
+  {
+    "name": "Amoxicillin",
+    "description": "Amoxicillin is a penicillin antibiotic that fights bacteria.",
+    "interactions": [],
+    "contraindications": [
+      "Penicillin allergy"
+    ]
+  },
+  {
+    "name": "Ibuprofen",
+    "description": "Ibuprofen is a nonsteroidal anti-inflammatory drug (NSAID).",
+    "interactions": [
+      {
+        "drug": "Warfarin",
+        "severity": "Major",
+        "effect": "Increased risk of bleeding."
+      }
+    ],
+    "contraindications": [
+      "Heart disease",
+      "Stomach ulcers"
+    ]
+  }
+]
