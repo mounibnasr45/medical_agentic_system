@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medical AI Assistant</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            width: 90%;
+            max-width: 800px;
+            height: 90vh;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            display: flex;
+            align-items: flex-start;
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .message-content {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            line-height: 1.5;
+        }
+
+        .message.user .message-content {
+            background: #667eea;
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.assistant .message-content {
+            background: white;
+            color: #333;
+            border-bottom-left-radius: 4px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        .message.system .message-content {
+            background: #fff3cd;
+            color: #856404;
+            border-left: 4px solid #ffc107;
+            font-style: italic;
+            max-width: 100%;
+        }
+
+        .typing-indicator {
+            display: flex;
+            gap: 4px;
+            padding: 12px 16px;
+            background: white;
+            border-radius: 12px;
+            width: fit-content;
+        }
+
+        .typing-indicator span {
+            width: 8px;
+            height: 8px;
+            background: #667eea;
+            border-radius: 50%;
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typing {
+            0%, 60%, 100% {
+                transform: translateY(0);
+            }
+            30% {
+                transform: translateY(-10px);
+            }
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .input-container {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            gap: 10px;
+        }
+
+        #queryInput {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 25px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        #queryInput:focus {
+            border-color: #667eea;
+        }
+
+        #sendBtn, #streamBtn {
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        #sendBtn:hover, #streamBtn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        #sendBtn:disabled, #streamBtn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .example-queries {
+            padding: 10px 20px;
+            background: #f9f9f9;
+            border-top: 1px solid #e0e0e0;
+            display: flex;
+            gap: 10px;
+            overflow-x: auto;
+        }
+
+        .example-query {
+            padding: 6px 12px;
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 15px;
+            font-size: 12px;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.2s;
+        }
+
+        .example-query:hover {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏥 Medical AI Assistant</h1>
+            <p>Powered by GraphRAG & Multi-Agent System</p>
+        </div>
+
+        <div class="example-queries">
+            <div class="example-query" onclick="setQuery('What are the contraindications for Aspirin?')">
+                Aspirin contraindications
+            </div>
+            <div class="example-query" onclick="setQuery('What are the interactions between Aspirin and Warfarin?')">
+                Aspirin-Warfarin interaction
+            </div>
+            <div class="example-query" onclick="setQuery('What are alternatives to Aspirin for pain relief?')">
+                Aspirin alternatives
+            </div>
+        </div>
+
+        <div class="chat-container" id="chatContainer">
+            <div class="message system">
+                <div class="message-content">
+                    👋 Hello! I'm your Medical AI Assistant. I can help you with drug information, interactions, contraindications, and alternatives. Ask me anything!
+                </div>
+            </div>
+        </div>
+
+        <div class="input-container">
+            <input 
+                type="text" 
+                id="queryInput" 
+                placeholder="Ask about drugs, interactions, contraindications..."
+                onkeypress="handleKeyPress(event)"
+            />
+            <button id="sendBtn" onclick="sendQuery()">Send</button>
+            <button id="streamBtn" onclick="sendStreamQuery()">Stream</button>
+        </div>
+    </div>
+
+    <script>
+        const chatContainer = document.getElementById('chatContainer');
+        const queryInput = document.getElementById('queryInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const streamBtn = document.getElementById('streamBtn');
+
+        function setQuery(query) {
+            queryInput.value = query;
+            queryInput.focus();
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendQuery();
+            }
+        }
+
+        function addMessage(content, type = 'assistant') {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            messageDiv.innerHTML = `<div class="message-content">${content}</div>`;
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            return messageDiv;
+        }
+
+        function addTypingIndicator() {
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'message assistant';
+            typingDiv.id = 'typing-indicator';
+            typingDiv.innerHTML = `
+                <div class="typing-indicator">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+            `;
+            chatContainer.appendChild(typingDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            return typingDiv;
+        }
+
+        function removeTypingIndicator() {
+            const indicator = document.getElementById('typing-indicator');
+            if (indicator) {
+                indicator.remove();
+            }
+        }
+
+        async function sendQuery() {
+            const query = queryInput.value.trim();
+            if (!query) return;
+
+            // Disable buttons
+            sendBtn.disabled = true;
+            streamBtn.disabled = true;
+
+            // Add user message
+            addMessage(query, 'user');
+            queryInput.value = '';
+
+            // Show typing indicator
+            const typingIndicator = addTypingIndicator();
+
+            try {
+                const response = await fetch('/ask', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ query: query })
+                });
+
+                const data = await response.json();
+                
+                // Remove typing indicator
+                removeTypingIndicator();
+
+                // Add assistant response
+                addMessage(data.response.raw || data.response, 'assistant');
+
+            } catch (error) {
+                removeTypingIndicator();
+                addMessage(`❌ Error: ${error.message}`, 'system');
+            } finally {
+                sendBtn.disabled = false;
+                streamBtn.disabled = false;
+            }
+        }
+
+        async function sendStreamQuery() {
+            const query = queryInput.value.trim();
+            if (!query) return;
+
+            // Disable buttons
+            sendBtn.disabled = true;
+            streamBtn.disabled = true;
+
+            // Add user message
+            addMessage(query, 'user');
+            queryInput.value = '';
+
+            // Create thinking log div
+            const thinkingLogDiv = document.createElement('div');
+            thinkingLogDiv.className = 'message system';
+            thinkingLogDiv.innerHTML = `
+                <div class="message-content" style="background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(99, 102, 241, 0.1)); border-left: 3px solid #8b5cf6; max-width: 90%;">
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                        <div style="width: 16px; height: 16px; border: 2px solid #8b5cf6; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+                        <strong style="color: #8b5cf6;">🤖 Agent Workflow</strong>
+                    </div>
+                    <div id="thinkingLog" style="max-height: 400px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.8; padding: 10px; background: rgba(255,255,255,0.6); border-radius: 6px; color: #4b5563;">
+                        <!-- Real-time thoughts appear here -->
+                    </div>
+                </div>
+            `;
+            chatContainer.appendChild(thinkingLogDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+
+            const thinkingLog = document.getElementById('thinkingLog');
+
+            try {
+                const response = await fetch('/ask/stream', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ query: query })
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const data = JSON.parse(line.slice(6));
+                            
+                            if (data.type === 'start') {
+                                const entry = document.createElement('div');
+                                entry.style.color = '#10b981';
+                                entry.style.fontWeight = '600';
+                                entry.innerHTML = `🚀 ${data.message}`;
+                                thinkingLog.appendChild(entry);
+                            } else if (data.type === 'thinking') {
+                                const entry = document.createElement('div');
+                                entry.style.marginTop = '4px';
+                                entry.style.paddingLeft = '8px';
+                                
+                                // Color code based on content
+                                const msg = data.message;
+                                if (msg.includes('Agent:')) {
+                                    entry.style.color = '#8b5cf6';
+                                    entry.style.fontWeight = '600';
+                                    entry.innerHTML = `👤 ${msg}`;
+                                } else if (msg.includes('Task:')) {
+                                    entry.style.color = '#3b82f6';
+                                    entry.innerHTML = `📋 ${msg}`;
+                                } else if (msg.includes('Thought:')) {
+                                    entry.style.color = '#6366f1';
+                                    entry.innerHTML = `💭 ${msg}`;
+                                } else if (msg.includes('Action:') || msg.includes('Using Tool:')) {
+                                    entry.style.color = '#10b981';
+                                    entry.style.fontWeight = '600';
+                                    entry.innerHTML = `🔧 ${msg}`;
+                                } else if (msg.includes('Observation:')) {
+                                    entry.style.color = '#f59e0b';
+                                    entry.innerHTML = `👁️ ${msg}`;
+                                } else if (msg.includes('Final Answer:')) {
+                                    entry.style.color = '#ef4444';
+                                    entry.style.fontWeight = '600';
+                                    entry.innerHTML = `✅ ${msg}`;
+                                } else if (msg.includes('Delegate')) {
+                                    entry.style.color = '#ec4899';
+                                    entry.style.fontWeight = '600';
+                                    entry.innerHTML = `🔄 ${msg}`;
+                                } else {
+                                    entry.style.color = '#6b7280';
+                                    entry.textContent = msg;
+                                }
+                                
+                                thinkingLog.appendChild(entry);
+                                // Auto-scroll to bottom
+                                thinkingLog.scrollTop = thinkingLog.scrollHeight;
+                            } else if (data.type === 'result') {
+                                thinkingLogDiv.remove();
+                                addMessage(data.message, 'assistant');
+                            } else if (data.type === 'done') {
+                                // Keep the thinking log visible
+                            } else if (data.type === 'error') {
+                                thinkingLogDiv.remove();
+                                addMessage(`❌ Error: ${data.message}`, 'system');
+                            }
+                        }
+                    }
+                }
+
+            } catch (error) {
+                thinkingLogDiv.remove();
+                addMessage(`❌ Stream error: ${error.message}`, 'system');
+            } finally {
+                sendBtn.disabled = false;
+                streamBtn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>

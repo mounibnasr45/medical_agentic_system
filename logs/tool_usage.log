@@ -1,0 +1,12 @@
+2025-12-05 22:56:06 | GRAPH_DB_SEARCH | Query: 'Gripex'
+2025-12-05 22:56:33 | GRAPH_DB_SEARCH | Success | Latency: 27.28s | Preview: Fact: Aspirin is also used long-term to help prevent further ischaemic strokes
+E...
+2025-12-05 22:56:35 | WEB_SEARCH | Query: 'Gripex medication'
+2025-12-05 22:56:40 | WEB_SEARCH | Success | Results: 3 | Latency: 4.74s
+2025-12-05 23:02:48 | GRAPH_DB_SEARCH | Query: 'aspirin and efferalgan'
+2025-12-05 23:02:52 | GRAPH_DB_SEARCH | Success | Latency: 4.19s | Preview: Fact: Aspirin is also known as acetylsalicylic acid.
+Fact: Aspirin is contraindi...
+2025-12-05 23:02:55 | CYPHER_QUERY | NL Query: 'Find all uses of efferalgan and potential interactions with aspirin'
+2025-12-05 23:02:57 | CYPHER_QUERY | No results | Latency: 2.14s | Cypher: 
+            MATCH (d1:entity {name: 'Aspirin'})-[r:RELATES_TO]->(d2:entity)
+            WHERE r.fac...
