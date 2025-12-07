@@ -10,6 +10,7 @@ import hashlib
 from datetime import datetime, timedelta
 from neo4j import GraphDatabase
 from medical_agent.config import Config
+from groq import Groq
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -98,7 +99,16 @@ class GraphDBTool(BaseTool):
             logger.info("Graph DB Search - Cache Hit")
             return f"[Cached] {cached}"
         
-        result = asyncio.run(self._async_search(query))
+        # Handle async context properly
+        try:
+            loop = asyncio.get_running_loop()
+            # In async context - need to handle differently
+            import nest_asyncio
+            nest_asyncio.apply()
+            result = asyncio.run(self._async_search(query))
+        except RuntimeError:
+            # No running loop - safe to use asyncio.run
+            result = asyncio.run(self._async_search(query))
         
         if result and "error" not in result.lower():
             _set_cache("GraphDB", query, result)
@@ -145,6 +155,7 @@ class CypherQueryTool(BaseTool):
     """
     args_schema: Type[BaseModel] = SearchInput
     _driver: Optional[Any] = None  # Private field for Neo4j driver
+    _llm_client: Optional[Any] = None # Private field for LLM client
     
     def __init__(self):
         super().__init__()
@@ -158,6 +169,12 @@ class CypherQueryTool(BaseTool):
                 auth=(Config.NEO4J_USER, Config.NEO4J_PASSWORD)
             )
         return self._driver
+
+    def _get_llm_client(self):
+        """Lazy load Groq client."""
+        if self._llm_client is None:
+            self._llm_client = Groq(api_key=Config.GROQ_API_KEY)
+        return self._llm_client
     
     def _run(self, query: str) -> str:
         logger.info(f"Cypher Query - Query: {query}")
@@ -186,62 +203,90 @@ class CypherQueryTool(BaseTool):
             return f"Cypher query error: {e}"
     
     def _nl_to_cypher(self, query: str) -> str:
-        """Convert natural language to Cypher query (simple pattern matching)."""
-        query_lower = query.lower()
-        
-        # Pattern: Find interactions
-        if "interact" in query_lower or "interaction" in query_lower:
-            drug_name = self._extract_drug_name(query)
-            return f"""
-            MATCH (d1:entity {{name: '{drug_name}'}})-[r:RELATES_TO]->(d2:entity)
-            WHERE r.fact CONTAINS 'interact'
-            RETURN d1.name AS drug1, d2.name AS drug2, r.fact AS interaction
-            LIMIT 10
+        """Convert natural language to Cypher query using Groq LLM."""
+        try:
+            client = self._get_llm_client()
+            
+            schema_desc = """
+            Nodes: 
+             - Entity (properties: name, summary)
+             - Episodic (properties: content, source)
+             - Community (properties: name, summary)
+
+            Relationships:
+             - (:Entity)-[:RELATES_TO {fact: "..."}]->(:Entity)
+             - (:Episodic)-[:MENTIONS]->(:Entity)
             """
-        
-        # Pattern: Find contraindications
-        elif "contraindicate" in query_lower or "contraindication" in query_lower:
-            drug_name = self._extract_drug_name(query)
-            return f"""
-            MATCH (d:entity {{name: '{drug_name}'}})-[r:RELATES_TO]->(c:entity)
-            WHERE r.fact CONTAINS 'contraindicated'
-            RETURN d.name AS drug, c.name AS condition, r.fact AS details
-            LIMIT 10
+            
+            prompt = f"""
+            You are an expert Neo4j Cypher query generator.
+            
+            Database Schema:
+            {schema_desc}
+            
+            Task: Generate a Cypher query for: "{query}"
+            
+            Rules:
+            1. Return ONLY the Cypher query. No markdown, no explanations.
+            2. Use case-insensitive matching: toLower(n.name) CONTAINS toLower('term').
+            3. Search 'name' and 'summary' properties of Entity nodes.
+            4. For "alternatives" or "similar", look for shared properties or relationships in the summary.
+            5. Always LIMIT results to 20.
+            6. Do not use procedures like apoc.* or db.*.
+            7. CRITICAL: If using UNION, you MUST use aliases to ensure identical column names across all parts (e.g. RETURN n.name AS Name, n.summary AS Info).
+            8. When looking for relationships (interactions, contraindications), check the 'fact' property on RELATES_TO edges.
+            9. ALWAYS use DISTINCT in your RETURN clause to prevent duplicate rows (e.g. RETURN DISTINCT ...).
+            10. IMPORTANT: Do NOT put conditions inside the relationship pattern like [:RELATES_TO {{fact: ...}}]. Instead, use the WHERE clause: MATCH ...-[r:RELATES_TO]-... WHERE toLower(r.fact) CONTAINS ...
             """
-        
-        # Pattern: Find all drugs
-        elif "all drugs" in query_lower or "list drugs" in query_lower:
-            return """
-            MATCH (d:entity)
-            WHERE d.name IN ['Aspirin', 'Warfarin', 'Ibuprofen', 'Metformin']
-            RETURN d.name AS drug, d.summary AS description
-            LIMIT 20
-            """
-        
-        # Default: Search by entity name
-        else:
-            return f"""
-            MATCH (n:entity)-[r]->(m)
-            WHERE n.name CONTAINS '{query}' OR m.name CONTAINS '{query}'
-            RETURN n.name AS entity1, type(r) AS relationship, m.name AS entity2, r.fact AS details
-            LIMIT 10
-            """
-    
-    def _extract_drug_name(self, query: str) -> str:
-        """Extract drug name from query."""
-        drugs = ['Aspirin', 'Warfarin', 'Ibuprofen', 'Metformin', 'Lisinopril']
-        for drug in drugs:
-            if drug.lower() in query.lower():
-                return drug
-        return "Aspirin"  # Default fallback
-    
+            
+            completion = client.chat.completions.create(
+                model=Config.GROQ_MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that writes Cypher queries."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                max_tokens=500
+            )
+            
+            cypher = completion.choices[0].message.content.strip()
+            
+            # Clean up markdown if present
+            if cypher.startswith("```"):
+                cypher = cypher.replace("```cypher", "").replace("```", "").strip()
+                
+            return cypher
+            
+        except Exception as e:
+            logger.error(f"LLM Cypher Generation Error: {e}")
+            # Fallback to a safe generic query
+            return f"MATCH (n:Entity) WHERE toLower(n.name) CONTAINS toLower('{query}') RETURN DISTINCT n LIMIT 10"
+
     def _format_results(self, records: list) -> str:
-        """Format Cypher query results."""
-        output = []
+        """Format Cypher query results into a readable string."""
+        if not records:
+            return "No results found."
+            
+        # Deduplicate records
+        unique_records = []
+        seen = set()
+        
         for record in records:
-            parts = [f"{k}: {v}" for k, v in record.items() if v]
-            output.append(" | ".join(parts))
-        return "\n".join(output[:10])  # Limit to 10 results
+            # Create a hashable representation of the record
+            # Sort keys to ensure consistent ordering
+            # Convert values to string to handle non-hashable types if any
+            record_tuple = tuple(sorted((k, str(v)) for k, v in record.items()))
+            if record_tuple not in seen:
+                seen.add(record_tuple)
+                unique_records.append(record)
+        
+        formatted = []
+        for i, record in enumerate(unique_records, 1):
+            formatted.append(f"Result {i}:")
+            for key, value in record.items():
+                formatted.append(f"  - {key}: {value}")
+            formatted.append("")
+        return "\n".join(formatted)
     
     def __del__(self):
         """Clean up Neo4j driver on deletion."""

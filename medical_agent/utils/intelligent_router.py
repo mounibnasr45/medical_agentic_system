@@ -27,6 +27,8 @@ class QueryAnalysis:
     reasoning: str  # LLM's reasoning for decisions
     suggested_tools: List[str]  # Recommended tools for this query
     rejection_message: Optional[str]  # If query should be rejected
+    use_chain_of_thought: bool  # Whether to use CoT reasoning
+    cot_reasoning_steps: Optional[List[str]]  # CoT steps if applicable
 
 
 class IntelligentRouter:
@@ -69,7 +71,9 @@ Analyze the query and respond with ONLY valid JSON (no markdown, no explanation)
   "max_iterations": {{"researcher": 1-4, "validator": 1-3, "analyst": 1-2}},
   "reasoning": "Brief explanation of your decisions",
   "suggested_tools": ["graph_db", "cypher", "web_search"],
-  "rejection_message": "Message if non-medical, else null"
+  "rejection_message": "Message if non-medical, else null",
+  "use_chain_of_thought": true/false,
+  "cot_reasoning_steps": ["step1", "step2", "step3"] or null
 }}
 
 ANALYSIS GUIDELINES:
@@ -111,6 +115,22 @@ ANALYSIS GUIDELINES:
 - cypher: For complex multi-hop queries (interactions, contraindications)
 - web_search: For latest info or rare drugs not in graph
 
+**Chain of Thought (use_chain_of_thought):**
+- TRUE if: complexity >= 3, multiple drugs/conditions, requires multi-step reasoning, safety-critical decisions
+- FALSE if: simple lookup, single entity, straightforward answer
+- Examples requiring CoT:
+  * "Can patient with X condition take drug Y and Z together?"
+  * "What's the safest painkiller for someone on blood thinners?"
+  * "Explain why drug A interacts with drug B"
+- Examples NOT requiring CoT:
+  * "What is Aspirin?"
+  * "List side effects of Ibuprofen"
+
+**CoT Reasoning Steps (cot_reasoning_steps):**
+If use_chain_of_thought=true, provide 3-5 reasoning steps:
+Example: ["Identify all drugs mentioned", "Check each drug for contraindications", "Evaluate drug-drug interactions", "Assess combined risk level", "Formulate recommendation"]
+If use_chain_of_thought=false, set to null
+
 **Rejection Message:**
 - If non-medical: Polite message explaining you handle medical queries only
 - If medical: null
@@ -141,7 +161,9 @@ Respond with ONLY the JSON object, nothing else."""
                 max_iterations=analysis_dict["max_iterations"],
                 reasoning=analysis_dict["reasoning"],
                 suggested_tools=analysis_dict["suggested_tools"],
-                rejection_message=analysis_dict.get("rejection_message")
+                rejection_message=analysis_dict.get("rejection_message"),
+                use_chain_of_thought=analysis_dict.get("use_chain_of_thought", False),
+                cot_reasoning_steps=analysis_dict.get("cot_reasoning_steps")
             )
             
         except Exception as e:
@@ -161,7 +183,9 @@ Respond with ONLY the JSON object, nothing else."""
             max_iterations={"researcher": 3, "validator": 2, "analyst": 1},
             reasoning="Fallback routing due to LLM error - using conservative defaults",
             suggested_tools=["graph_db", "cypher", "web_search"],
-            rejection_message=None
+            rejection_message=None,
+            use_chain_of_thought=False,
+            cot_reasoning_steps=None
         )
     
     def check_semantic_cache(self, query: str, embedding: Optional[np.ndarray] = None) -> Optional[str]:

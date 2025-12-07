@@ -2,6 +2,8 @@ from typing import Iterable
 from graphiti_core.embedder.client import EmbedderClient
 from sentence_transformers import SentenceTransformer
 
+# Global model cache (singleton pattern for performance)
+_MODEL_CACHE = None
 
 class LocalEmbedder(EmbedderClient):
     """
@@ -17,7 +19,11 @@ class LocalEmbedder(EmbedderClient):
             model_name: Name of the sentence-transformers model to use.
                        Default is 'all-MiniLM-L6-v2' (384 dimensions, fast).
         """
-        self.model = SentenceTransformer(model_name)
+        global _MODEL_CACHE
+        if _MODEL_CACHE is None:
+            print(f"Loading embedding model: {model_name} (cached for reuse)...")
+            _MODEL_CACHE = SentenceTransformer(model_name)
+        self.model = _MODEL_CACHE
         
     async def create(
         self, input_data: str | list[str] | Iterable[int] | Iterable[Iterable[int]]

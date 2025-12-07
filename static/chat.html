@@ -253,7 +253,6 @@
                 onkeypress="handleKeyPress(event)"
             />
             <button id="sendBtn" onclick="sendQuery()">Send</button>
-            <button id="streamBtn" onclick="sendStreamQuery()">Stream</button>
         </div>
     </div>
 
@@ -261,7 +260,6 @@
         const chatContainer = document.getElementById('chatContainer');
         const queryInput = document.getElementById('queryInput');
         const sendBtn = document.getElementById('sendBtn');
-        const streamBtn = document.getElementById('streamBtn');
 
         function setQuery(query) {
             queryInput.value = query;
@@ -310,9 +308,8 @@
             const query = queryInput.value.trim();
             if (!query) return;
 
-            // Disable buttons
+            // Disable button
             sendBtn.disabled = true;
-            streamBtn.disabled = true;
 
             // Add user message
             addMessage(query, 'user');
@@ -335,137 +332,18 @@
                 // Remove typing indicator
                 removeTypingIndicator();
 
-                // Add assistant response
-                addMessage(data.response.raw || data.response, 'assistant');
+                // Add assistant response with metadata
+                let displayResponse = data.response;
+                if (data.processing_mode) {
+                    displayResponse = `<small style="color: #666; font-size: 11px;">Mode: ${data.processing_mode} | Complexity: ${data.analysis?.complexity || 'N/A'}</small><br><br>${data.response}`;
+                }
+                addMessage(displayResponse, 'assistant');
 
             } catch (error) {
                 removeTypingIndicator();
                 addMessage(`❌ Error: ${error.message}`, 'system');
             } finally {
                 sendBtn.disabled = false;
-                streamBtn.disabled = false;
-            }
-        }
-
-        async function sendStreamQuery() {
-            const query = queryInput.value.trim();
-            if (!query) return;
-
-            // Disable buttons
-            sendBtn.disabled = true;
-            streamBtn.disabled = true;
-
-            // Add user message
-            addMessage(query, 'user');
-            queryInput.value = '';
-
-            // Create thinking log div
-            const thinkingLogDiv = document.createElement('div');
-            thinkingLogDiv.className = 'message system';
-            thinkingLogDiv.innerHTML = `
-                <div class="message-content" style="background: linear-gradient(135deg, rgba(139, 92, 246, 0.1), rgba(99, 102, 241, 0.1)); border-left: 3px solid #8b5cf6; max-width: 90%;">
-                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-                        <div style="width: 16px; height: 16px; border: 2px solid #8b5cf6; border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite;"></div>
-                        <strong style="color: #8b5cf6;">🤖 Agent Workflow</strong>
-                    </div>
-                    <div id="thinkingLog" style="max-height: 400px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.8; padding: 10px; background: rgba(255,255,255,0.6); border-radius: 6px; color: #4b5563;">
-                        <!-- Real-time thoughts appear here -->
-                    </div>
-                </div>
-            `;
-            chatContainer.appendChild(thinkingLogDiv);
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-
-            const thinkingLog = document.getElementById('thinkingLog');
-
-            try {
-                const response = await fetch('/ask/stream', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ query: query })
-                });
-
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-
-                while (true) {
-                    const { value, done } = await reader.read();
-                    if (done) break;
-
-                    const chunk = decoder.decode(value);
-                    const lines = chunk.split('\n');
-
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            const data = JSON.parse(line.slice(6));
-                            
-                            if (data.type === 'start') {
-                                const entry = document.createElement('div');
-                                entry.style.color = '#10b981';
-                                entry.style.fontWeight = '600';
-                                entry.innerHTML = `🚀 ${data.message}`;
-                                thinkingLog.appendChild(entry);
-                            } else if (data.type === 'thinking') {
-                                const entry = document.createElement('div');
-                                entry.style.marginTop = '4px';
-                                entry.style.paddingLeft = '8px';
-                                
-                                // Color code based on content
-                                const msg = data.message;
-                                if (msg.includes('Agent:')) {
-                                    entry.style.color = '#8b5cf6';
-                                    entry.style.fontWeight = '600';
-                                    entry.innerHTML = `👤 ${msg}`;
-                                } else if (msg.includes('Task:')) {
-                                    entry.style.color = '#3b82f6';
-                                    entry.innerHTML = `📋 ${msg}`;
-                                } else if (msg.includes('Thought:')) {
-                                    entry.style.color = '#6366f1';
-                                    entry.innerHTML = `💭 ${msg}`;
-                                } else if (msg.includes('Action:') || msg.includes('Using Tool:')) {
-                                    entry.style.color = '#10b981';
-                                    entry.style.fontWeight = '600';
-                                    entry.innerHTML = `🔧 ${msg}`;
-                                } else if (msg.includes('Observation:')) {
-                                    entry.style.color = '#f59e0b';
-                                    entry.innerHTML = `👁️ ${msg}`;
-                                } else if (msg.includes('Final Answer:')) {
-                                    entry.style.color = '#ef4444';
-                                    entry.style.fontWeight = '600';
-                                    entry.innerHTML = `✅ ${msg}`;
-                                } else if (msg.includes('Delegate')) {
-                                    entry.style.color = '#ec4899';
-                                    entry.style.fontWeight = '600';
-                                    entry.innerHTML = `🔄 ${msg}`;
-                                } else {
-                                    entry.style.color = '#6b7280';
-                                    entry.textContent = msg;
-                                }
-                                
-                                thinkingLog.appendChild(entry);
-                                // Auto-scroll to bottom
-                                thinkingLog.scrollTop = thinkingLog.scrollHeight;
-                            } else if (data.type === 'result') {
-                                thinkingLogDiv.remove();
-                                addMessage(data.message, 'assistant');
-                            } else if (data.type === 'done') {
-                                // Keep the thinking log visible
-                            } else if (data.type === 'error') {
-                                thinkingLogDiv.remove();
-                                addMessage(`❌ Error: ${data.message}`, 'system');
-                            }
-                        }
-                    }
-                }
-
-            } catch (error) {
-                thinkingLogDiv.remove();
-                addMessage(`❌ Stream error: ${error.message}`, 'system');
-            } finally {
-                sendBtn.disabled = false;
-                streamBtn.disabled = false;
             }
         }
     </script>

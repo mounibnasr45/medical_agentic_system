@@ -6,10 +6,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from medical_agent.utils.intelligent_router import QueryAnalysis
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from medical_agent.utils.intelligent_router import QueryAnalysis
 
 # Choose LLM: Groq (cloud, powerful, rate-limited) or Ollama (local, unlimited)
 USE_GROQ = True  # Set to False to use local Ollama instead
@@ -52,7 +48,7 @@ def get_clinical_researcher():
         allow_delegation=True,  # Can delegate to safety validator
         tools=[graph_db_tool, cypher_query_tool, web_search_tool],
         llm=llm,
-        max_iter=3  # Reduced from 5 to prevent excessive tool calls
+        max_iter=3  
     )
 
 def get_safety_validator():
@@ -99,7 +95,7 @@ def get_medical_analyst():
 
 # --- Crews ---
 
-def create_medical_crew(query: str, analysis: 'QueryAnalysis' = None):
+def create_medical_crew(query: str, analysis: 'QueryAnalysis' = None, apply_cot: bool = True):
     """
     Intelligent multi-agent crew with LLM-powered dynamic configuration.
     
@@ -107,6 +103,15 @@ def create_medical_crew(query: str, analysis: 'QueryAnalysis' = None):
     - Select only required agents (not always all 3)
     - Set adaptive iteration limits based on complexity
     - Optimize tool usage based on query intent
+    - Apply Chain of Thought reasoning for complex queries
+    
+    Args:
+        query: User's medical query
+        analysis: QueryAnalysis from router (auto-generated if None)
+        apply_cot: Whether to apply CoT reasoning (default: True)
+    
+    Returns:
+        Crew instance configured for the query
     """
     
     # Fallback if no analysis provided (backward compatibility)
@@ -128,13 +133,31 @@ def create_medical_crew(query: str, analysis: 'QueryAnalysis' = None):
         'Web Search' for t in analysis.suggested_tools
     ])
     
+    # Prepare Chain of Thought instructions if applicable
+    cot_instructions = ""
+    if apply_cot and analysis.use_chain_of_thought and analysis.cot_reasoning_steps:
+        steps_formatted = "\n".join([f"   {i+1}. {step}" for i, step in enumerate(analysis.cot_reasoning_steps)])
+        cot_instructions = f"""
+        
+**🧠 CHAIN OF THOUGHT REASONING REQUIRED:**
+This query requires step-by-step logical reasoning. Follow these steps:
+{steps_formatted}
+
+For each step, explicitly state:
+- What you're analyzing
+- Your reasoning process
+- Your conclusion for that step
+
+Then synthesize all steps into a final answer.
+"""
+    
     # Task 1: Research (always executed, but optimized)
     research_task = Task(
         description=f"""Research the question: '{query}'
         
         QUERY INTENT: {analysis.intent}
         COMPLEXITY: {analysis.complexity}/5
-        RECOMMENDED TOOL PRIORITY: {tool_priority}
+        RECOMMENDED TOOL PRIORITY: {tool_priority}{cot_instructions}
         
         **CRITICAL TOOL USAGE RULES:**
         1. Try DIFFERENT tools in each iteration (don't repeat the same tool)
@@ -212,7 +235,10 @@ def create_medical_crew(query: str, analysis: 'QueryAnalysis' = None):
     print(f"\n🎯 Crew Configuration (AI-optimized):")
     print(f"   Agents: {len(agents)} ({', '.join([a.role for a in agents])})")
     print(f"   Tasks: {len(tasks)}")
-    print(f"   Max iterations: {analysis.max_iterations}\n")
+    print(f"   Max iterations: {analysis.max_iterations}")
+    if apply_cot and analysis.use_chain_of_thought:
+        print(f"   🧠 Chain of Thought: ENABLED ({len(analysis.cot_reasoning_steps)} steps)")
+    print()
     
     return Crew(
         agents=agents,
