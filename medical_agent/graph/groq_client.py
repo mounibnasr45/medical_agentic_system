@@ -108,6 +108,12 @@ class GroqClient(LLMClient):
                         await asyncio.sleep(wait_time)
                         continue
 
-                print(f"Error calling Groq API: {e}")
-                if attempt == max_retries - 1:
+                # A request that is too large is not a pacing problem: the same
+                # payload will be rejected every time. Retrying it burns quota and
+                # buries the real cause under identical errors.
+                if "413" in error_str or "too large" in error_str.lower():
+                    print(f"Groq rejected the request as too large: {e}")
                     raise
+
+                print(f"Error calling Groq API: {e}")
+                raise
