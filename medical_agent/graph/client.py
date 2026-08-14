@@ -89,13 +89,20 @@ class GraphGateway:
 
             try:
                 from graphiti_core import Graphiti
+                from graphiti_core.driver.neo4j_driver import Neo4jDriver
 
                 from medical_agent.graph.groq_client import GroqClient
 
+                # Built explicitly rather than passing uri/user/password to
+                # Graphiti: that path hardcodes the database name to "neo4j",
+                # which is wrong for instances that name it after the instance id.
                 client = Graphiti(
-                    Config.NEO4J_URI,
-                    Config.NEO4J_USER,
-                    Config.NEO4J_PASSWORD,
+                    graph_driver=Neo4jDriver(
+                        uri=Config.NEO4J_URI,
+                        user=Config.NEO4J_USER,
+                        password=Config.NEO4J_PASSWORD,
+                        database=Config.NEO4J_DATABASE,
+                    ),
                     llm_client=GroqClient(
                         api_key=Config.GROQ_API_KEY,
                         model=Config.GROQ_MODEL_NAME,

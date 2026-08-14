@@ -29,8 +29,13 @@ def _csv(name: str) -> list[str]:
 class Config:
     # --- Neo4j ---
     NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-    NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
+    # Aura's credentials file calls these NEO4J_USERNAME/NEO4J_DATABASE, so accept
+    # both spellings rather than making the file's values silently not apply.
+    NEO4J_USER = os.getenv("NEO4J_USER") or os.getenv("NEO4J_USERNAME") or "neo4j"
     NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
+    # Graphiti defaults this to "neo4j"; some Aura instances name the database
+    # after the instance id, and querying the wrong one fails silently.
+    NEO4J_DATABASE = os.getenv("NEO4J_DATABASE") or "neo4j"
 
     # --- API keys ---
     GROQ_API_KEY = os.getenv("GROQ_API_KEY")

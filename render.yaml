@@ -26,6 +26,9 @@ services:
         sync: false
       - key: NEO4J_PASSWORD
         sync: false
+      # Must match the credentials file. Not always "neo4j".
+      - key: NEO4J_DATABASE
+        sync: false
       - key: GROQ_MODEL_NAME
         value: llama-3.3-70b-versatile
       - key: GEMINI_EMBEDDING_MODEL

@@ -109,8 +109,8 @@ async def reset_graph() -> None:
         Config.NEO4J_URI, auth=(Config.NEO4J_USER, Config.NEO4J_PASSWORD)
     )
     try:
-        await driver.execute_query("MATCH (n) DETACH DELETE n")
-        logger.info("Graph cleared")
+        await driver.execute_query("MATCH (n) DETACH DELETE n", database_=Config.NEO4J_DATABASE)
+        logger.info("Graph cleared (database: %s)", Config.NEO4J_DATABASE)
     finally:
         await driver.close()
 

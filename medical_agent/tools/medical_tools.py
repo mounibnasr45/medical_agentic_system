@@ -249,7 +249,12 @@ class CypherQueryTool(TracedTool):
             driver = self._get_driver()
             # Read routing is defence in depth: a write that slipped past the guard
             # is rejected by the server when routed to a read replica.
-            records, _, _ = driver.execute_query(cypher, routing_=RoutingControl.READ, timeout=20)
+            records, _, _ = driver.execute_query(
+                cypher,
+                routing_=RoutingControl.READ,
+                database_=Config.NEO4J_DATABASE,
+                timeout=20,
+            )
         except Exception as exc:
             logger.warning("Cypher execution failed: %s", exc)
             emit(EventType.TOOL_COMPLETED, tool="cypher_exec", ok=False, error=str(exc))
