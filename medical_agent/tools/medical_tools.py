@@ -13,7 +13,6 @@ Two cross-cutting concerns live here:
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 import re
@@ -25,6 +24,7 @@ from crewai.tools import BaseTool
 from pydantic import BaseModel, Field, field_validator
 
 from medical_agent.config import Config
+from medical_agent.graph import loop as graph_loop
 from medical_agent.graph.client import get_gateway
 from medical_agent.utils.events import EventType, emit
 
@@ -70,23 +70,6 @@ def _check_cache(tool_name: str, query: str) -> str | None:
 
 def _set_cache(tool_name: str, query: str, result: str) -> None:
     _TOOL_CACHE[_cache_key(tool_name, query)] = (result, datetime.now())
-
-
-def _run_coroutine(coro):
-    """Run a coroutine from sync tool code, whether or not a loop is running.
-
-    CrewAI invokes tools synchronously from a worker thread. If that thread happens
-    to have a running loop, nest_asyncio lets us reenter it.
-    """
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-
-    import nest_asyncio
-
-    nest_asyncio.apply()
-    return asyncio.run(coro)
 
 
 class SearchInput(BaseModel):
@@ -168,10 +151,15 @@ class GraphDBTool(TracedTool):
     trace_name: str = "graph_db"
 
     def execute(self, query: str) -> str:
-        return _run_coroutine(self.search(query))
+        # Runs on the graph loop: the async driver's locks belong to whichever
+        # loop opened the connection pool.
+        return graph_loop.run_sync(self._search(query))
 
     async def search(self, query: str) -> str:
         """Async entry point, reused by the parallel retrieval path."""
+        return await graph_loop.run_async(self._search(query))
+
+    async def _search(self, query: str) -> str:
         client = await get_gateway().get_client()
         if client is None:
             return GRAPH_UNAVAILABLE
@@ -224,9 +212,14 @@ class CypherQueryTool(TracedTool):
 
     def _get_llm_client(self):
         if self._llm_client is None:
-            from groq import Groq
+            from crewai import LLM
 
-            self._llm_client = Groq(api_key=Config.GROQ_API_KEY)
+            self._llm_client = LLM(
+                model=Config.agent_llm_model(),
+                api_key=Config.agent_llm_api_key(),
+                temperature=0.1,
+                max_tokens=500,
+            )
         return self._llm_client
 
     def execute(self, query: str) -> str:
@@ -316,16 +309,16 @@ Rules:
    in a WHERE clause, never inside the relationship pattern.
 """
         try:
-            completion = self._get_llm_client().chat.completions.create(
-                model=Config.GROQ_MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": "You write read-only Cypher queries."},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.1,
-                max_tokens=500,
+            cypher = (
+                self._get_llm_client()
+                .call(
+                    [
+                        {"role": "system", "content": "You write read-only Cypher queries."},
+                        {"role": "user", "content": prompt},
+                    ]
+                )
+                .strip()
             )
-            cypher = completion.choices[0].message.content.strip()
             if cypher.startswith("```"):
                 cypher = cypher.replace("```cypher", "").replace("```", "").strip()
             return cypher

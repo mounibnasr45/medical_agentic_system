@@ -54,7 +54,15 @@ async def lifespan(app: FastAPI):
         Config.DAILY_QUERY_LIMIT,
     )
     yield
-    await get_gateway().close()
+
+    # The client belongs to the graph loop, so it must be closed there too.
+    from medical_agent.graph import loop as graph_loop
+
+    try:
+        await graph_loop.run_async(get_gateway().close(), timeout=10)
+    except Exception as exc:
+        logger.debug("Graph shutdown: %s", exc)
+    graph_loop.shutdown()
 
 
 app = FastAPI(

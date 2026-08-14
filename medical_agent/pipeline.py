@@ -277,7 +277,7 @@ async def _in_thread(loop, fn, *args):
 async def _graph_available() -> bool:
     if not Config.graph_configured():
         return False
-    return await get_gateway().get_client() is not None
+    return await get_gateway().available()
 
 
 def _analysis_summary(analysis: QueryAnalysis) -> dict:

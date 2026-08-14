@@ -155,7 +155,7 @@ class GraphGateway:
                 await asyncio.wait_for(result, timeout=15)
             return
 
-    async def health(self) -> dict:
+    async def _health(self) -> dict:
         """Status for /health. Never raises."""
         if not Config.GRAPH_ENABLED:
             return {"status": "disabled"}
@@ -173,6 +173,23 @@ class GraphGateway:
             except Exception as exc:
                 logger.debug("Error closing graph client: %s", exc)
             self._client = None
+
+    async def health(self) -> dict:
+        """Status for /health, evaluated on the graph loop."""
+        from medical_agent.graph import loop as graph_loop
+
+        try:
+            return await graph_loop.run_async(self._health(), timeout=30)
+        except Exception as exc:  # never fail the health check itself
+            return {"status": "unavailable", "detail": str(exc)}
+
+    async def available(self) -> bool:
+        from medical_agent.graph import loop as graph_loop
+
+        try:
+            return await graph_loop.run_async(self.get_client(), timeout=30) is not None
+        except Exception:
+            return False
 
 
 _gateway = GraphGateway()
