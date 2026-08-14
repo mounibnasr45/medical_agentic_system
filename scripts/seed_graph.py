@@ -56,6 +56,51 @@ def build_episode(drug: dict) -> str:
     return "\n".join(parts)
 
 
+def _mask(value: str | None) -> str:
+    """Show enough of a secret to spot a wrong or malformed value, not enough to leak it."""
+    if not value:
+        return "<empty>"
+    if len(value) <= 4:
+        return f"<{len(value)} chars>"
+    return f"{value[:2]}...{value[-2:]} ({len(value)} chars)"
+
+
+async def check_connection() -> bool:
+    """Verify credentials before doing anything destructive.
+
+    Connection problems are the overwhelmingly common failure here, and the
+    driver's own traceback buries the cause forty frames deep.
+    """
+    from neo4j import AsyncGraphDatabase
+    from neo4j.exceptions import AuthError, ConfigurationError, ServiceUnavailable
+
+    logger.info("Connecting to %s as %s", Config.NEO4J_URI, Config.NEO4J_USER)
+    driver = AsyncGraphDatabase.driver(
+        Config.NEO4J_URI, auth=(Config.NEO4J_USER, Config.NEO4J_PASSWORD)
+    )
+    try:
+        await driver.verify_connectivity()
+        logger.info("Connection verified")
+        return True
+    except AuthError:
+        logger.error("Authentication rejected by Neo4j.")
+        logger.error("  user:     %s", Config.NEO4J_USER)
+        logger.error("  password: %s", _mask(Config.NEO4J_PASSWORD))
+        logger.error("Check that:")
+        logger.error("  - the password matches THIS instance (each Aura instance has its own)")
+        logger.error("  - the value has no surrounding quotes, spaces or trailing characters")
+        logger.error("  - an unquoted '#' in .env is not truncating it as a comment")
+        logger.error("  - the user is 'neo4j' unless you created another")
+        return False
+    except (ServiceUnavailable, ConfigurationError) as exc:
+        logger.error("Could not reach the database: %s", exc)
+        logger.error("Check the URI scheme (Aura needs neo4j+s://) and that the")
+        logger.error("instance is Running rather than paused in the Aura console.")
+        return False
+    finally:
+        await driver.close()
+
+
 async def reset_graph() -> None:
     """Delete all nodes. Destructive and irreversible."""
     from neo4j import AsyncGraphDatabase
@@ -79,6 +124,9 @@ async def seed(reset: bool) -> int:
 
     drugs = json.loads(DATA_PATH.read_text(encoding="utf-8"))
     logger.info("Loaded %d drugs from %s", len(drugs), DATA_PATH.name)
+
+    if not await check_connection():
+        return 1
 
     if reset:
         await reset_graph()
