@@ -75,6 +75,24 @@ class GraphGateway:
             )
         )
 
+    def _build_cross_encoder(self):
+        """Reranker for hybrid search results.
+
+        Must be passed explicitly. Graphiti defaults an unset cross_encoder to
+        OpenAIRerankerClient(), which demands OPENAI_API_KEY and makes the whole
+        graph unavailable without it - a failure that hides on any machine where
+        that variable happens to be set, and appears only in deployment.
+        """
+        from graphiti_core.cross_encoder.gemini_reranker_client import GeminiRerankerClient
+        from graphiti_core.llm_client.config import LLMConfig
+
+        return GeminiRerankerClient(
+            config=LLMConfig(
+                api_key=Config.GOOGLE_API_KEY,
+                model=Config.GEMINI_RERANKER_MODEL,
+            )
+        )
+
     def _build_embedder(self):
         """Gemini embeddings over the API.
 
@@ -128,6 +146,7 @@ class GraphGateway:
                     ),
                     llm_client=self._build_llm_client(),
                     embedder=self._build_embedder(),
+                    cross_encoder=self._build_cross_encoder(),
                 )
                 await self._verify(client)
                 self._client = client

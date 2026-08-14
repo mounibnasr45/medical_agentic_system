@@ -52,6 +52,9 @@ class Config:
     # and its latency is the advantage.
     GRAPH_LLM_PROVIDER = os.getenv("GRAPH_LLM_PROVIDER", "gemini").strip().lower()
     GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
+    # Reranks hybrid-search results. Must be set explicitly: Graphiti falls back to
+    # an OpenAI reranker, which requires an API key this deployment does not have.
+    GEMINI_RERANKER_MODEL = os.getenv("GEMINI_RERANKER_MODEL", "gemini-2.5-flash-lite")
 
     # Provider for the agents, router, reasoning and merge steps.
     #
