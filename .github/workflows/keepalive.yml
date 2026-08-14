@@ -2,40 +2,68 @@ name: Keep-alive
 
 # Two free tiers, two independent ways for the demo to go dark:
 #
-#   Render free web services spin down after 15 minutes idle, and cold starts run
-#   to a minute. Render allows 750 instance-hours per month; a month of continuous
-#   uptime is 744, so a single always-warm service fits with room to spare. This is
-#   why the frontend is a static site, which consumes no instance-hours at all.
+#   Render free web services spin down after 15 minutes idle, and a cold start
+#   runs to about a minute. Render allows 750 instance-hours per month; a month of
+#   continuous uptime is 744, so one always-warm service fits with little to spare.
+#   That is why the frontend is a static site, which consumes no instance-hours.
 #
 #   Neo4j AuraDB Free pauses after 3 days of inactivity. /health touches the graph,
-#   so this ping keeps the database active too.
+#   so this ping keeps the database awake too.
+#
+# Two caveats worth knowing:
+#
+#   GitHub's scheduled runs are best-effort and are frequently delayed under load,
+#   sometimes past Render's 15-minute idle window. The schedule is therefore set to
+#   the 5-minute minimum rather than 10, to get more chances to land inside it. An
+#   occasional cold start is still possible; the UI handles it explicitly.
+#
+#   GitHub disables scheduled workflows in repositories with no activity for 60
+#   days. If the demo goes quiet for months, re-enable it from the Actions tab.
 
 on:
   schedule:
-    # Every 10 minutes, which is inside Render's 15-minute idle window.
-    - cron: "*/10 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
+
+# Never queue these up behind each other; a missed ping is better than a backlog.
+concurrency:
+  group: keepalive
+  cancel-in-progress: true
 
 jobs:
   ping:
     name: Ping the API
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Health check
         env:
-          API_URL: ${{ vars.API_URL }}
+          # Overridable per repository, with the deployed host as the default so
+          # this works without any configuration.
+          API_URL: ${{ vars.API_URL || 'https://medical-agent-api-xvy2.onrender.com' }}
         run: |
-          if [ -z "$API_URL" ]; then
-            echo "API_URL variable not set; nothing to ping"
-            exit 0
-          fi
-          # --max-time is generous: a cold start has to boot the whole app.
-          response=$(curl -fsS --max-time 120 "$API_URL/health") || {
-            echo "health check failed" >&2
-            exit 1
-          }
-          echo "$response"
-          echo "$response" | grep -q '"status":"ok"' || {
-            echo "unexpected health payload" >&2
-            exit 1
-          }
+          set -uo pipefail
+          echo "Pinging $API_URL/health"
+
+          # Two attempts: the first may be paying for a cold start, and a single
+          # timeout should not raise a false alarm.
+          for attempt in 1 2; do
+            if response=$(curl -fsS --max-time 120 "$API_URL/health"); then
+              echo "$response"
+              if echo "$response" | grep -q '"status":"ok"'; then
+                graph=$(echo "$response" | grep -o '"graph":{"status":"[a-z_]*"' | grep -o '[a-z_]*"$' | tr -d '"')
+                echo "Service awake. Graph: ${graph:-unknown}"
+                # A degraded graph is reported, not failed: the API still answers,
+                # and a paused AuraDB should not read as an outage.
+                [ "$graph" = "connected" ] || echo "::warning::Graph is '${graph}', not connected"
+                exit 0
+              fi
+              echo "::error::Unexpected health payload"
+              exit 1
+            fi
+            echo "Attempt $attempt failed"
+            [ "$attempt" = 1 ] && sleep 20
+          done
+
+          echo "::error::Service did not respond after two attempts"
+          exit 1
