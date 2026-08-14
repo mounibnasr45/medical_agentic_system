@@ -33,6 +33,11 @@ services:
         value: llama-3.3-70b-versatile
       - key: GEMINI_EMBEDDING_MODEL
         value: gemini-embedding-001
+      # Graph extraction prompts exceed Groq's free per-minute token ceiling.
+      - key: GRAPH_LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_MODEL_NAME
+        value: gemini-2.5-flash
       # Must match the dimension the Neo4j vector index was seeded with.
       - key: EMBEDDING_DIM
         value: "768"

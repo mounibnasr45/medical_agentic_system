@@ -50,6 +50,31 @@ class GraphGateway:
             return False
         return (time.monotonic() - self._last_failure_at) < _RETRY_COOLDOWN_SECONDS
 
+    def _build_llm_client(self):
+        """LLM used by Graphiti for entity and relationship extraction.
+
+        Defaults to Gemini because extraction prompts are large: roughly 19k
+        tokens per episode, against a 12k tokens-per-minute ceiling on Groq's
+        free tier. That is a single oversized request, not a pacing problem, so
+        no amount of retrying or delay makes it succeed.
+        """
+        if Config.GRAPH_LLM_PROVIDER == "groq":
+            from medical_agent.graph.groq_client import GroqClient
+
+            return GroqClient(api_key=Config.GROQ_API_KEY, model=Config.GROQ_MODEL_NAME)
+
+        from graphiti_core.llm_client.config import LLMConfig
+        from graphiti_core.llm_client.gemini_client import GeminiClient
+
+        return GeminiClient(
+            config=LLMConfig(
+                api_key=Config.GOOGLE_API_KEY,
+                model=Config.GEMINI_MODEL_NAME,
+                small_model=Config.GEMINI_MODEL_NAME,
+                temperature=0.0,
+            )
+        )
+
     def _build_embedder(self):
         """Gemini embeddings over the API.
 
@@ -91,8 +116,6 @@ class GraphGateway:
                 from graphiti_core import Graphiti
                 from graphiti_core.driver.neo4j_driver import Neo4jDriver
 
-                from medical_agent.graph.groq_client import GroqClient
-
                 # Built explicitly rather than passing uri/user/password to
                 # Graphiti: that path hardcodes the database name to "neo4j",
                 # which is wrong for instances that name it after the instance id.
@@ -103,10 +126,7 @@ class GraphGateway:
                         password=Config.NEO4J_PASSWORD,
                         database=Config.NEO4J_DATABASE,
                     ),
-                    llm_client=GroqClient(
-                        api_key=Config.GROQ_API_KEY,
-                        model=Config.GROQ_MODEL_NAME,
-                    ),
+                    llm_client=self._build_llm_client(),
                     embedder=self._build_embedder(),
                 )
                 await self._verify(client)

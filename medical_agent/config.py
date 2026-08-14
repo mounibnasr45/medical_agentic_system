@@ -44,6 +44,14 @@ class Config:
     # --- Models ---
     GROQ_MODEL_NAME = os.getenv("GROQ_MODEL_NAME", "llama-3.3-70b-versatile")
     GEMINI_EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001")
+
+    # Graph ingestion runs a different workload from the agents: Graphiti's entity
+    # extraction prompts reach ~19k tokens, which exceeds Groq's free 12k
+    # tokens-per-minute ceiling in a single request and can never succeed there.
+    # Gemini handles ingestion; Groq stays for the agents, where prompts are small
+    # and its latency is the advantage.
+    GRAPH_LLM_PROVIDER = os.getenv("GRAPH_LLM_PROVIDER", "gemini").strip().lower()
+    GEMINI_MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
     # Must match the dimension of the Neo4j vector index. Changing it needs a re-seed.
     EMBEDDING_DIM = _int("EMBEDDING_DIM", 768)
 
