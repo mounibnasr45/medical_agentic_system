@@ -1,0 +1,7 @@
+# Normalise to LF in the repository. The Dockerfile's shell form and the CI
+# scripts run on Linux, where CRLF breaks them.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary

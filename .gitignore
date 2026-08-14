@@ -1,5 +1,17 @@
 .env
+.env.local
 __pycache__/
 *.pyc
+*.pyo
 logs/
 *.log
+data/conversations/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
