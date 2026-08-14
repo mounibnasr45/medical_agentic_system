@@ -1,16 +1,31 @@
-crewai
-graphiti-core
-neo4j
-fastapi
-uvicorn
-python-dotenv
-google-generativeai
-typer
-requests
-groq
-langchain-groq>=0.2.0
-langchain>=0.3.0
-langchain-core>=0.3.0
-langchain-community>=0.3.0
+# Pinned for reproducible builds. Update deliberately, not incidentally.
 
+# Agent orchestration.
+# The litellm extra is required, not optional: crewai 1.x only routes a fixed set
+# of providers natively, and Groq is not among them. Without it every LLM call
+# fails with "did not match any supported native provider".
+crewai[litellm]==1.15.16
 
+# Knowledge graph (temporal GraphRAG) + Gemini embeddings
+graphiti-core[google-genai]==0.29.3
+google-genai==2.18.1
+# Pinned to 5.x: graphiti-core allows >=5.26 but is developed against the 5 series.
+neo4j==5.28.4
+
+# API
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+# Held below 2.13: crewai 1.15.16 requires pydantic<2.13.
+pydantic==2.12.5
+
+# LLM provider. Used directly rather than through langchain-groq, which added no
+# behaviour here and pinned an incompatible groq version.
+groq==1.6.0
+
+# Tools
+# ddgs is the maintained successor to the deprecated duckduckgo-search package.
+ddgs==9.14.4
+
+# Runtime support
+python-dotenv==1.2.2
+nest-asyncio==1.6.0
