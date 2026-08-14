@@ -1,0 +1,89 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-surface: oklch(0.16 0.01 260);
+  --color-surface-raised: oklch(0.2 0.012 260);
+  --color-surface-sunken: oklch(0.13 0.01 260);
+  --color-line: oklch(0.3 0.015 260);
+  --color-ink: oklch(0.95 0.005 260);
+  --color-ink-muted: oklch(0.68 0.012 260);
+  --color-ink-faint: oklch(0.52 0.012 260);
+  --color-accent: oklch(0.72 0.14 195);
+  --color-ok: oklch(0.75 0.15 155);
+  --color-warn: oklch(0.78 0.15 75);
+  --color-danger: oklch(0.68 0.19 25);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+  font-feature-settings: 'cv02', 'cv03', 'cv04';
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Subtle scrollbars so the two panes do not compete with the content. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.animate-dot {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+.prose-answer {
+  line-height: 1.65;
+}
+
+.prose-answer p {
+  margin-bottom: 0.85rem;
+}
+
+.prose-answer ul,
+.prose-answer ol {
+  margin: 0.5rem 0 0.85rem 1.25rem;
+  list-style: disc;
+}
+
+.prose-answer ol {
+  list-style: decimal;
+}
+
+.prose-answer li {
+  margin-bottom: 0.3rem;
+}
+
+.prose-answer h1,
+.prose-answer h2,
+.prose-answer h3 {
+  font-weight: 600;
+  margin: 1.1rem 0 0.5rem;
+}
+
+.prose-answer code {
+  background: var(--color-surface-sunken);
+  padding: 0.1rem 0.3rem;
+  border-radius: 0.25rem;
+  font-size: 0.875em;
+}
+
+.prose-answer strong {
+  color: var(--color-ink);
+  font-weight: 600;
+}
