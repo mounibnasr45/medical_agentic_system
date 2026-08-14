@@ -1,0 +1,41 @@
+name: Keep-alive
+
+# Two free tiers, two independent ways for the demo to go dark:
+#
+#   Render free web services spin down after 15 minutes idle, and cold starts run
+#   to a minute. Render allows 750 instance-hours per month; a month of continuous
+#   uptime is 744, so a single always-warm service fits with room to spare. This is
+#   why the frontend is a static site, which consumes no instance-hours at all.
+#
+#   Neo4j AuraDB Free pauses after 3 days of inactivity. /health touches the graph,
+#   so this ping keeps the database active too.
+
+on:
+  schedule:
+    # Every 10 minutes, which is inside Render's 15-minute idle window.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    name: Ping the API
+    runs-on: ubuntu-latest
+    steps:
+      - name: Health check
+        env:
+          API_URL: ${{ vars.API_URL }}
+        run: |
+          if [ -z "$API_URL" ]; then
+            echo "API_URL variable not set; nothing to ping"
+            exit 0
+          fi
+          # --max-time is generous: a cold start has to boot the whole app.
+          response=$(curl -fsS --max-time 120 "$API_URL/health") || {
+            echo "health check failed" >&2
+            exit 1
+          }
+          echo "$response"
+          echo "$response" | grep -q '"status":"ok"' || {
+            echo "unexpected health payload" >&2
+            exit 1
+          }

@@ -1,29 +1,33 @@
-# Use an official Python runtime as a parent image
-FROM python:3.10-slim
+# Single-stage: the API is pure Python and the frontend deploys separately as a
+# static site, so there is nothing to compile here.
+FROM python:3.11-slim
 
-# Set the working directory in the container
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
 WORKDIR /app
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-# Install system dependencies (if any needed for python packages)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
+# Build-only toolchain, removed in the same layer so it never reaches the image.
+COPY requirements.txt .
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc \
+    && pip install --no-cache-dir -r requirements.txt \
+    && apt-get purge -y gcc \
+    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the requirements file into the container
-COPY requirements.txt .
+COPY medical_agent/ ./medical_agent/
+COPY scripts/ ./scripts/
+COPY data/ ./data/
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Run unprivileged.
+RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
+USER appuser
 
-# Copy the rest of the application code
-COPY . .
-
-# Expose the port the app runs on
 EXPOSE 8000
 
-# Command to run the application
-CMD ["uvicorn", "medical_agent.api.server:app", "--host", "0.0.0.0", "--port", "8000"]
+# Render assigns the port at runtime; binding a fixed 8000 fails its health check.
+# One worker deliberately: the instance has 512MB, and both the session store and
+# the rate limiter are per-process.
+CMD ["sh", "-c", "uvicorn medical_agent.api.server:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]

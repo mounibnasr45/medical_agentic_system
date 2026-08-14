@@ -1,0 +1,63 @@
+name: Deploy
+
+# Render's own auto-deploy is disabled (see render.yaml). Deploys happen here and
+# only after CI has passed on main, so a red build cannot reach production.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Trigger Render deploys
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Deploy API
+        env:
+          HOOK: ${{ secrets.RENDER_API_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "RENDER_API_DEPLOY_HOOK is not set" >&2
+            exit 1
+          fi
+          curl -fsS -X POST "$HOOK" -o /dev/null -w "api deploy queued: %{http_code}\n"
+
+      - name: Deploy UI
+        env:
+          HOOK: ${{ secrets.RENDER_UI_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "RENDER_UI_DEPLOY_HOOK is not set" >&2
+            exit 1
+          fi
+          curl -fsS -X POST "$HOOK" -o /dev/null -w "ui deploy queued: %{http_code}\n"
+
+      - name: Wait for the API to come back healthy
+        env:
+          API_URL: ${{ vars.API_URL }}
+        run: |
+          if [ -z "$API_URL" ]; then
+            echo "API_URL variable not set; skipping post-deploy verification"
+            exit 0
+          fi
+          echo "Waiting for $API_URL/health"
+          for attempt in $(seq 1 60); do
+            if curl -fsS "$API_URL/health" > /dev/null; then
+              echo "healthy after $((attempt * 10))s"
+              curl -s "$API_URL/health"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "service did not become healthy within 10 minutes" >&2
+          exit 1

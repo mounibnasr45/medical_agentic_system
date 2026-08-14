@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend lint and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check medical_agent scripts tests
+
+      - name: Format check
+        run: ruff format --check medical_agent scripts tests
+
+      - name: Tests
+        # No secrets: the suite covers pure logic and the paths that resolve
+        # before any model or database call.
+        env:
+          GRAPH_ENABLED: "false"
+        run: pytest
+
+  frontend:
+    name: Frontend typecheck and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+
+  image:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: medical-agent-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Boot the container and check /health
+        # Proves the image starts and serves without a database or model keys,
+        # which is exactly what Render's health check requires.
+        run: |
+          docker run -d --name api -p 8000:8000 \
+            -e GROQ_API_KEY=ci-not-used \
+            -e GRAPH_ENABLED=false \
+            medical-agent-api:ci
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health > /dev/null; then
+              echo "healthy after ${attempt}s"
+              curl -s http://localhost:8000/health
+              docker rm -f api
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "health check never passed"
+          docker logs api
+          docker rm -f api
+          exit 1
