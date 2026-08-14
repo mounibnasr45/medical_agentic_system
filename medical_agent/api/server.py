@@ -37,6 +37,13 @@ logging.basicConfig(
     level=getattr(logging, Config.LOG_LEVEL, logging.INFO),
     format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
 )
+
+# Third-party loggers that report routine work at INFO. Left alone they emit
+# dozens of lines per connect - Neo4j announces every "index already exists" -
+# which buries the one line that matters when something actually breaks.
+for _noisy in ("neo4j.notifications", "neo4j", "httpx", "httpcore", "LiteLLM", "litellm"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 MAX_QUERY_CHARS = 1000
