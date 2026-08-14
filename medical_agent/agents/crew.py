@@ -48,8 +48,8 @@ def get_llm() -> LLM:
     global _llm
     if _llm is None:
         _llm = LLM(
-            model=f"groq/{Config.GROQ_MODEL_NAME}",
-            api_key=Config.GROQ_API_KEY,
+            model=Config.agent_llm_model(),
+            api_key=Config.agent_llm_api_key(),
             temperature=0.1,
         )
     return _llm

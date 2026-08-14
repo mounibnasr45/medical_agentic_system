@@ -99,8 +99,8 @@ class ChainOfThoughtProcessor:
     def llm(self) -> LLM:
         if self._llm is None:
             self._llm = LLM(
-                model=f"groq/{Config.GROQ_MODEL_NAME}",
-                api_key=Config.GROQ_API_KEY,
+                model=Config.agent_llm_model(),
+                api_key=Config.agent_llm_api_key(),
                 temperature=0.2,
                 max_tokens=2000,
             )
@@ -161,7 +161,14 @@ class ChainOfThoughtProcessor:
         final_answer = ""
         if "**FINAL ANSWER:**" in response:
             tail = response.split("**FINAL ANSWER:**", 1)[1]
-            final_answer = tail.split("**")[0].strip() if "**" in tail else tail.strip()
+            # End at the trailing labels, not at the first '**'. Answers contain
+            # their own bold markup - bulleted contraindications, drug names - and
+            # splitting on the marker truncated them to a few characters.
+            for marker in ("**CONFIDENCE LEVEL:", "**REASONING QUALITY:"):
+                cut = tail.find(marker)
+                if cut != -1:
+                    tail = tail[:cut]
+            final_answer = tail.strip()
 
         return CoTResult(
             steps=steps,

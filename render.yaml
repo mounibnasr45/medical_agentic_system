@@ -36,6 +36,9 @@ services:
       # Graph extraction prompts exceed Groq's free per-minute token ceiling.
       - key: GRAPH_LLM_PROVIDER
         value: gemini
+      # CrewAI strips its cache-breakpoint markers only for native providers.
+      - key: AGENT_LLM_PROVIDER
+        value: gemini
       - key: GEMINI_MODEL_NAME
         value: gemini-2.5-flash
       # Must match the dimension the Neo4j vector index was seeded with.

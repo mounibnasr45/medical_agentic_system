@@ -63,8 +63,8 @@ class ParallelRetriever:
     def merger_llm(self) -> LLM:
         if self._merger_llm is None:
             self._merger_llm = LLM(
-                model=f"groq/{Config.GROQ_MODEL_NAME}",
-                api_key=Config.GROQ_API_KEY,
+                model=Config.agent_llm_model(),
+                api_key=Config.agent_llm_api_key(),
                 temperature=0.2,
                 max_tokens=800,
             )

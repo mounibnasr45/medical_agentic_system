@@ -8,10 +8,10 @@ Two constraints shape this module:
   - Memory is bounded. The deployment has 512MB, so both the number of sessions and
     the messages per session are capped, and the least recently used session is
     evicted rather than allowed to grow without limit.
-  - History is a list of messages. An earlier version wrapped this in LangChain's
-    ChatMessageHistory and called the summariser through langchain-groq. Neither
-    added behaviour over the Groq SDK already in use, and langchain-groq pinned an
-    incompatible groq version, so both were removed.
+  - History is a plain list of messages. An earlier version wrapped it in
+    LangChain's ChatMessageHistory and ran a summariser through langchain-groq.
+    Neither earned its dependency: the wrapper added no behaviour over a list, and
+    nothing consumed the summary.
 """
 
 from __future__ import annotations
@@ -23,8 +23,6 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
-
-from medical_agent.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +49,6 @@ class ConversationMemory:
         self.session_id = session_id or self._new_id()
         self.messages: list[Message] = []
         self.created_at = datetime.now(UTC).isoformat()
-        self._llm = None
 
     @staticmethod
     def _new_id() -> str:
@@ -90,38 +87,6 @@ class ConversationMemory:
             "ai_messages": sum(1 for m in self.messages if m.role == "assistant"),
             "has_summary": len(self.messages) >= SUMMARY_THRESHOLD,
         }
-
-    def summary(self) -> str:
-        """LLM summary of the conversation. Empty for short conversations."""
-        if len(self.messages) < SUMMARY_THRESHOLD:
-            return ""
-
-        transcript = "\n".join(
-            f"{'User' if m.role == 'user' else 'Assistant'}: {m.content}" for m in self.messages
-        )
-        prompt = (
-            "Summarise this medical conversation in 2-3 sentences, covering the main "
-            "topics discussed, the medications or conditions mentioned, and any "
-            f"warnings given.\n\nConversation:\n{transcript}\n\nSummary:"
-        )
-        try:
-            completion = self._summariser().chat.completions.create(
-                model=Config.GROQ_MODEL_NAME,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.0,
-                max_tokens=300,
-            )
-            return completion.choices[0].message.content or ""
-        except Exception as exc:
-            logger.warning("Summarisation failed: %s", exc)
-            return ""
-
-    def _summariser(self):
-        if self._llm is None:
-            from groq import Groq
-
-            self._llm = Groq(api_key=Config.GROQ_API_KEY)
-        return self._llm
 
     def clear(self) -> None:
         self.messages.clear()
