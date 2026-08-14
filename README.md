@@ -53,7 +53,7 @@ flowchart TB
 | Layer | Choice |
 | --- | --- |
 | Orchestration | CrewAI, three role-specialised agents |
-| Reasoning model | Groq `llama-3.3-70b-versatile` |
+| Reasoning model | Gemini `2.5-flash` (Groq selectable via `AGENT_LLM_PROVIDER`) |
 | Knowledge graph | Neo4j AuraDB with Graphiti temporal GraphRAG |
 | Embeddings | Gemini `gemini-embedding-001`, 768 dimensions |
 | API | FastAPI, Server-Sent Events |
@@ -100,6 +100,24 @@ with read routing. Both controls, because either alone is one bug from a wiped g
 embedder pulled in torch, roughly 2.5GB of image and over 500MB resident. The
 deployment tier has 512MB. Moving embeddings to an API call was the difference
 between deployable and not.
+
+**One provider, chosen by measurement rather than preference.** The system began on
+Groq and moved to Gemini for two concrete reasons found by running it. Graphiti's
+entity-extraction prompts reach roughly 19k tokens per episode, against a 12k
+tokens-per-minute ceiling on Groq's free tier: a single oversized request, which no
+amount of pacing or retrying can satisfy. Separately, CrewAI 1.x marks cache
+breakpoints on agent messages and strips them only for providers it supports
+natively; Groq is not one, so those messages reach the API carrying a property it
+rejects, and every crew run fails. Both providers remain selectable through
+`AGENT_LLM_PROVIDER` and `GRAPH_LLM_PROVIDER` for anyone on a paid Groq tier.
+
+**All graph work runs on one dedicated event loop.** Neo4j's async driver binds its
+locks to the loop that opened the connection pool, and this process has several: the
+request loop, plus a fresh one per `asyncio.run()` inside tools that CrewAI invokes
+synchronously from worker threads. Sharing a cached client across them fails with
+"bound to a different event loop" - and because graph tools degrade rather than
+raise, that failure is silent: the agent quietly answers from web search instead.
+A single long-lived loop in a background thread owns every graph coroutine.
 
 **The graph degrades instead of failing.** Neo4j AuraDB Free pauses after three days
 idle. Graph access goes through a gateway that tracks availability and refuses to
