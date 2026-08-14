@@ -57,7 +57,8 @@ services:
   - type: web
     name: medical-agent-ui
     runtime: static
-    plan: free
+    # No plan key: static sites have no instance type and are always free.
+    # Setting one fails validation with "no such plan free for service type web".
     rootDir: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: ./dist
