@@ -64,8 +64,11 @@ services:
     staticPublishPath: ./dist
     autoDeploy: false
     envVars:
+      # The real assigned host. Render appends a suffix when a name is taken, and
+      # Vite bakes this in at build time, so a stale value ships a bundle that
+      # calls a host that does not exist.
       - key: VITE_API_URL
-        value: https://medical-agent-api.onrender.com
+        value: https://medical-agent-api-xvy2.onrender.com
     routes:
       # Single-page app: every unknown path resolves to the entry document.
       - type: rewrite
