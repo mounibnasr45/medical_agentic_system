@@ -1,227 +1,210 @@
-"""
-Chain of Thought (CoT) Reasoning Module
+"""Explicit chain-of-thought reasoning for safety-critical queries.
 
-Implements explicit step-by-step reasoning for complex medical queries.
-Uses LLM to break down complex problems into logical steps.
+The router decides when a question needs step-by-step reasoning and supplies the
+steps. This module executes them and returns the chain as structured data.
+
+Structure matters here: an earlier version formatted the reasoning into markdown
+and prepended it to the answer, which meant the UI could only show it as a wall of
+text. Emitting each step as its own event lets the interface render reasoning as it
+happens, and keeps the answer itself clean.
 """
 
-from typing import List, Dict, Any
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
 from crewai import LLM
+
 from medical_agent.config import Config
+from medical_agent.utils.events import EventType, emit
+
+logger = logging.getLogger(__name__)
+
+_STEP_HEADER = re.compile(r"^\*\*Step\s*(\d+)\s*:\s*(.+?)\*\*\s*$", re.IGNORECASE)
+
+
+@dataclass
+class ReasoningStep:
+    index: int
+    name: str
+    reasoning: str = ""
+    conclusion: str = ""
+
+    def as_dict(self) -> dict:
+        return {
+            "index": self.index,
+            "name": self.name,
+            "reasoning": self.reasoning,
+            "conclusion": self.conclusion,
+        }
+
+
+@dataclass
+class CoTResult:
+    steps: list[ReasoningStep] = field(default_factory=list)
+    final_answer: str = ""
+    confidence: str = "medium"
+    quality: str = "adequate"
+    error: str | None = None
+
+    def as_dict(self) -> dict:
+        return {
+            "steps": [s.as_dict() for s in self.steps],
+            "final_answer": self.final_answer,
+            "confidence": self.confidence,
+            "quality": self.quality,
+            "error": self.error,
+        }
+
+
+PROMPT = """You are a medical AI assistant using explicit step-by-step reasoning.
+
+USER QUERY: "{query}"
+
+REASONING STEPS TO FOLLOW:
+{steps}
+
+AVAILABLE RESEARCH DATA:
+{findings}
+
+For each step state what you are analysing, show your reasoning, and give a
+conclusion. Use exactly this format:
+
+**Step 1: [step name]**
+Reasoning: [your reasoning]
+Conclusion: [your conclusion]
+
+**Step 2: [step name]**
+Reasoning: [your reasoning]
+Conclusion: [your conclusion]
+
+After all steps:
+
+**FINAL ANSWER:**
+[answer synthesised from the steps above]
+
+**CONFIDENCE LEVEL:** [High/Medium/Low]
+**REASONING QUALITY:** [Strong/Adequate/Weak]
+"""
 
 
 class ChainOfThoughtProcessor:
-    """
-    Implements Chain of Thought reasoning for complex medical queries.
-    
-    CoT improves accuracy on multi-step reasoning tasks by:
-    1. Breaking down complex questions into steps
-    2. Solving each step explicitly
-    3. Combining results for final answer
-    """
-    
-    def __init__(self):
-        """Initialize CoT processor with powerful LLM."""
-        self.llm = LLM(
-            model="groq/llama-3.3-70b-versatile",
-            api_key=Config.GROQ_API_KEY,
-            temperature=0.2,  # Slightly higher for creative reasoning
-            max_tokens=2000  # Allow longer reasoning chains
+    def __init__(self) -> None:
+        self._llm: LLM | None = None
+
+    @property
+    def llm(self) -> LLM:
+        if self._llm is None:
+            self._llm = LLM(
+                model=f"groq/{Config.GROQ_MODEL_NAME}",
+                api_key=Config.GROQ_API_KEY,
+                temperature=0.2,
+                max_tokens=2000,
+            )
+        return self._llm
+
+    def run(
+        self,
+        query: str,
+        reasoning_steps: list[str],
+        research_findings: str = "",
+    ) -> CoTResult:
+        prompt = PROMPT.format(
+            query=query,
+            steps="\n".join(f"{i}. {s}" for i, s in enumerate(reasoning_steps, 1)),
+            findings=research_findings or "No research data provided.",
         )
-    
-    def process_with_cot(
-        self, 
-        query: str, 
-        reasoning_steps: List[str],
-        research_findings: str = ""
-    ) -> Dict[str, Any]:
-        """
-        Apply Chain of Thought reasoning to a query.
-        
-        Args:
-            query: User's medical query
-            reasoning_steps: List of reasoning steps from router
-            research_findings: Data gathered by research agent
-            
-        Returns:
-            Dict with 'reasoning_chain' and 'final_answer'
-        """
-        
-        prompt = f"""You are a medical AI assistant using Chain of Thought reasoning.
-
-**USER QUERY:** "{query}"
-
-**REASONING STEPS TO FOLLOW:**
-{self._format_steps(reasoning_steps)}
-
-**AVAILABLE RESEARCH DATA:**
-{research_findings if research_findings else "No research data provided yet."}
-
-**INSTRUCTIONS:**
-Think through this problem step-by-step following the reasoning steps above.
-For each step:
-1. State what you're analyzing
-2. Show your reasoning
-3. State your conclusion for that step
-
-Format your response as:
-
-**Step 1: [Step name]**
-Reasoning: [Your detailed reasoning]
-Conclusion: [What you concluded]
-
-**Step 2: [Step name]**
-Reasoning: [Your detailed reasoning]
-Conclusion: [What you concluded]
-
-[Continue for all steps...]
-
-**FINAL ANSWER:**
-[Synthesized answer based on all steps]
-
-**CONFIDENCE LEVEL:** [High/Medium/Low]
-**REASONING QUALITY:** [Strong/Adequate/Weak] - explain why
-
-Begin your step-by-step reasoning:"""
-
         try:
             response = self.llm.call([{"role": "user", "content": prompt}])
-            
-            # Parse response into structured format
-            return self._parse_cot_response(response, reasoning_steps)
-            
-        except Exception as e:
-            print(f"⚠️  CoT reasoning failed: {e}")
-            return {
-                "reasoning_chain": [],
-                "final_answer": research_findings,
-                "confidence": "low",
-                "reasoning_quality": "weak",
-                "error": str(e)
-            }
-    
-    def _format_steps(self, steps: List[str]) -> str:
-        """Format reasoning steps as numbered list."""
-        return "\n".join([f"{i+1}. {step}" for i, step in enumerate(steps)])
-    
-    def _parse_cot_response(self, response: str, expected_steps: List[str]) -> Dict[str, Any]:
-        """Parse LLM's CoT response into structured format."""
-        
-        # Extract reasoning chain
-        reasoning_chain = []
-        current_step = None
-        current_reasoning = []
-        current_conclusion = None
-        
-        lines = response.split('\n')
-        for line in lines:
-            line = line.strip()
-            
-            # Detect step headers
-            if line.startswith('**Step') and ':**' in line:
-                # Save previous step if exists
-                if current_step is not None:
-                    reasoning_chain.append({
-                        "step": current_step,
-                        "reasoning": "\n".join(current_reasoning).strip(),
-                        "conclusion": current_conclusion or ""
-                    })
-                
-                # Start new step
-                current_step = line.split(':**')[1].strip() if ':**' in line else line
-                current_reasoning = []
-                current_conclusion = None
-                
-            elif line.startswith('Reasoning:'):
-                current_reasoning.append(line.replace('Reasoning:', '').strip())
-            elif line.startswith('Conclusion:'):
-                current_conclusion = line.replace('Conclusion:', '').strip()
-            elif current_step is not None and line and not line.startswith('**'):
-                current_reasoning.append(line)
-        
-        # Save last step
-        if current_step is not None:
-            reasoning_chain.append({
-                "step": current_step,
-                "reasoning": "\n".join(current_reasoning).strip(),
-                "conclusion": current_conclusion or ""
-            })
-        
-        # Extract final answer
+        except Exception as exc:
+            logger.warning("Chain-of-thought reasoning failed: %s", exc)
+            return CoTResult(final_answer=research_findings, confidence="low", error=str(exc))
+
+        result = self.parse(response)
+        for step in result.steps:
+            emit(EventType.COT_STEP, **step.as_dict())
+        return result
+
+    @staticmethod
+    def parse(response: str) -> CoTResult:
+        """Parse the structured reasoning response.
+
+        Tolerant by design: a malformed response should still yield an answer.
+        """
+        steps: list[ReasoningStep] = []
+        current: ReasoningStep | None = None
+        buffer: list[str] = []
+
+        def flush() -> None:
+            if current is not None:
+                current.reasoning = "\n".join(buffer).strip()
+                steps.append(current)
+
+        for raw_line in response.splitlines():
+            line = raw_line.strip()
+            header = _STEP_HEADER.match(line)
+            if header:
+                flush()
+                buffer = []
+                current = ReasoningStep(index=int(header.group(1)), name=header.group(2).strip())
+            elif line.lower().startswith("reasoning:"):
+                buffer.append(line.split(":", 1)[1].strip())
+            elif line.lower().startswith("conclusion:") and current is not None:
+                current.conclusion = line.split(":", 1)[1].strip()
+            elif current is not None and line and not line.startswith("**"):
+                buffer.append(line)
+        flush()
+
         final_answer = ""
         if "**FINAL ANSWER:**" in response:
-            parts = response.split("**FINAL ANSWER:**")
-            if len(parts) > 1:
-                answer_section = parts[1]
-                # Take until next ** marker or end
-                if "**" in answer_section:
-                    final_answer = answer_section.split("**")[0].strip()
-                else:
-                    final_answer = answer_section.strip()
-        
-        # Extract confidence and quality
-        confidence = "medium"
-        reasoning_quality = "adequate"
-        
-        if "**CONFIDENCE LEVEL:**" in response:
-            conf_line = [l for l in lines if "CONFIDENCE LEVEL" in l]
-            if conf_line:
-                if "high" in conf_line[0].lower():
-                    confidence = "high"
-                elif "low" in conf_line[0].lower():
-                    confidence = "low"
-        
-        if "**REASONING QUALITY:**" in response:
-            qual_line = [l for l in lines if "REASONING QUALITY" in l]
-            if qual_line:
-                if "strong" in qual_line[0].lower():
-                    reasoning_quality = "strong"
-                elif "weak" in qual_line[0].lower():
-                    reasoning_quality = "weak"
-        
-        return {
-            "reasoning_chain": reasoning_chain,
-            "final_answer": final_answer,
-            "confidence": confidence,
-            "reasoning_quality": reasoning_quality,
-            "full_response": response
-        }
-    
-    def format_cot_for_display(self, cot_result: Dict[str, Any]) -> str:
-        """Format CoT results for user-friendly display."""
-        
-        output = ["## 🧠 Chain of Thought Reasoning\n"]
-        
-        # Show each reasoning step
-        for i, step in enumerate(cot_result.get("reasoning_chain", []), 1):
-            output.append(f"**Step {i}: {step['step']}**")
-            if step.get('reasoning'):
-                output.append(f"*Reasoning:* {step['reasoning']}")
-            if step.get('conclusion'):
-                output.append(f"*Conclusion:* {step['conclusion']}")
-            output.append("")  # Blank line
-        
-        # Show final answer
-        output.append("---")
-        output.append("## ✅ Final Answer\n")
-        output.append(cot_result.get("final_answer", "No answer generated"))
-        output.append("")
-        
-        # Show confidence
-        confidence = cot_result.get("confidence", "medium")
-        quality = cot_result.get("reasoning_quality", "adequate")
-        
-        output.append(f"**Confidence:** {confidence.upper()} | **Reasoning Quality:** {quality.upper()}")
-        
-        return "\n".join(output)
+            tail = response.split("**FINAL ANSWER:**", 1)[1]
+            final_answer = tail.split("**")[0].strip() if "**" in tail else tail.strip()
+
+        return CoTResult(
+            steps=steps,
+            final_answer=final_answer,
+            confidence=_pick(response, "CONFIDENCE LEVEL", ["high", "low"], "medium"),
+            quality=_pick(response, "REASONING QUALITY", ["strong", "weak"], "adequate"),
+        )
 
 
-# Global CoT processor instance
-_cot_processor = None
+def _pick(response: str, label: str, options: list[str], default: str) -> str:
+    for line in response.splitlines():
+        if label in line:
+            lowered = line.lower()
+            for option in options:
+                if option in lowered:
+                    return option
+    return default
+
+
+def render_markdown(result: CoTResult) -> str:
+    """Plain-text rendering for the non-streaming endpoint."""
+    lines = ["## Chain of thought", ""]
+    for step in result.steps:
+        lines.append(f"**Step {step.index}: {step.name}**")
+        if step.reasoning:
+            lines.append(f"Reasoning: {step.reasoning}")
+        if step.conclusion:
+            lines.append(f"Conclusion: {step.conclusion}")
+        lines.append("")
+    lines += ["---", "", "## Answer", "", result.final_answer or "No answer generated.", ""]
+    lines.append(f"Confidence: {result.confidence} | Reasoning quality: {result.quality}")
+    return "\n".join(lines)
+
+
+_processor: ChainOfThoughtProcessor | None = None
+
 
 def get_cot_processor() -> ChainOfThoughtProcessor:
-    """Get or create global CoT processor instance."""
-    global _cot_processor
-    if _cot_processor is None:
-        _cot_processor = ChainOfThoughtProcessor()
-    return _cot_processor
+    global _processor
+    if _processor is None:
+        _processor = ChainOfThoughtProcessor()
+    return _processor
+
+
+def as_metadata(result: CoTResult) -> dict[str, Any]:
+    return result.as_dict()

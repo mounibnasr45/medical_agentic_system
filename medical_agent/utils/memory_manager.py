@@ -1,166 +1,167 @@
-"""
-Memory Manager for Medical Chatbot using LangChain
-Provides conversation history and context using in-memory storage
+"""Session-scoped conversation memory.
+
+Sessions live in process. On a single always-warm instance that is sufficient, and
+it keeps the demo free of a database it does not otherwise need.
+
+Two constraints shape this module:
+
+  - Memory is bounded. The deployment has 512MB, so both the number of sessions and
+    the messages per session are capped, and the least recently used session is
+    evicted rather than allowed to grow without limit.
+  - History is a list of messages. An earlier version wrapped this in LangChain's
+    ChatMessageHistory and called the summariser through langchain-groq. Neither
+    added behaviour over the Groq SDK already in use, and langchain-groq pinned an
+    incompatible groq version, so both were removed.
 """
 
-from typing import List, Dict, Optional, Any
-from datetime import datetime
+from __future__ import annotations
+
 import hashlib
+import logging
+import threading
+from collections import OrderedDict
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Literal
 
-from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain_groq import ChatGroq
 from medical_agent.config import Config
 
+logger = logging.getLogger(__name__)
 
-class MedicalConversationMemory:
-    """
-    Conversation memory for medical chatbot using LangChain.
-    Features:
-    - Session-based conversation history (in-memory)
-    - Context-aware memory retrieval
-    - Automatic summarization for long conversations
-    """
-    
-    def __init__(self, session_id: str = None, max_messages: int = 20):
-        self.session_id = session_id or self._generate_session_id()
-        self.max_messages = max_messages
-        
-        # Initialize simple in-memory chat history
-        self.chat_history = ChatMessageHistory()
-        
-        # Initialize LLM for summarization
-        self.llm = ChatGroq(
-            api_key=Config.GROQ_API_KEY,
-            model_name="llama-3.3-70b-versatile",
-            temperature=0.0
-        )
-    
-    def _generate_session_id(self) -> str:
-        """Generate unique session ID."""
-        timestamp = datetime.now().isoformat()
-        return hashlib.md5(timestamp.encode()).hexdigest()[:16]
-    
-    def add_user_message(self, message: str):
-        """Add user message to memory."""
-        self.chat_history.add_user_message(message)
-    
-    def add_ai_message(self, message: str):
-        """Add AI response to memory."""
-        self.chat_history.add_message(AIMessage(content=message))
-    
-    def get_conversation_history(self, limit: int = None) -> List[Dict[str, str]]:
-        """Get formatted conversation history."""
-        messages = self.chat_history.messages
-        if limit:
-            messages = messages[-limit:]
-        
-        history = []
-        for msg in messages:
-            if msg.type == "human":
-                history.append({"role": "user", "content": msg.content})
-            elif msg.type == "ai":
-                history.append({"role": "assistant", "content": msg.content})
-        
-        return history
-    
-    def get_context_for_query(self, current_query: str) -> str:
-        """
-        Get relevant context from conversation history for current query.
-        Returns formatted context string for agent.
-        """
-        history = self.get_conversation_history(limit=self.max_messages)
-        
-        if not history:
+MAX_SESSIONS = 200
+MAX_MESSAGES_PER_SESSION = 40
+CONTEXT_MESSAGES = 6
+SUMMARY_THRESHOLD = 10
+
+
+@dataclass
+class Message:
+    role: Literal["user", "assistant"]
+    content: str
+    at: str
+
+    def as_dict(self) -> dict:
+        return {"role": self.role, "content": self.content, "at": self.at}
+
+
+class ConversationMemory:
+    """Rolling history for one conversation."""
+
+    def __init__(self, session_id: str | None = None) -> None:
+        self.session_id = session_id or self._new_id()
+        self.messages: list[Message] = []
+        self.created_at = datetime.now(UTC).isoformat()
+        self._llm = None
+
+    @staticmethod
+    def _new_id() -> str:
+        seed = f"{datetime.now(UTC).isoformat()}{id(object())}"
+        return hashlib.sha256(seed.encode()).hexdigest()[:16]
+
+    def _add(self, role: Literal["user", "assistant"], content: str) -> None:
+        self.messages.append(Message(role=role, content=content, at=datetime.now(UTC).isoformat()))
+        if len(self.messages) > MAX_MESSAGES_PER_SESSION:
+            del self.messages[:-MAX_MESSAGES_PER_SESSION]
+
+    def add_user_message(self, content: str) -> None:
+        self._add("user", content)
+
+    def add_ai_message(self, content: str) -> None:
+        self._add("assistant", content)
+
+    def history(self, limit: int | None = None) -> list[dict]:
+        messages = self.messages[-limit:] if limit else self.messages
+        return [m.as_dict() for m in messages]
+
+    def context_for_query(self) -> str:
+        """Recent turns, formatted for injection into an agent prompt."""
+        if not self.messages:
             return ""
-        
-        # Format context
-        context_parts = ["## Previous Conversation Context:"]
-        for msg in history[-5:]:  # Last 5 messages for immediate context
-            role = "User" if msg["role"] == "user" else "Assistant"
-            context_parts.append(f"{role}: {msg['content']}")
-        
-        return "\n".join(context_parts)
-    
-    def get_summary(self) -> str:
-        """Get conversation summary for long conversations."""
-        messages = self.memory.chat_memory.messages
-        if len(messages) < 10:
-            return ""
-        
-        # Create summary using LLM
-        conversation_text = "\n".join([
-            f"{'User' if msg.type == 'human' else 'Assistant'}: {msg.content}"
-            for msg in messages
-        ])
-        
-        summary_prompt = f"""Summarize this medical conversation in 2-3 sentences, focusing on:
-- Main medical topics discussed
-- Key medications or conditions mentioned
-- Important warnings or recommendations given
+        recent = self.messages[-CONTEXT_MESSAGES:]
+        lines = ["## Previous conversation context:"]
+        lines += [f"{'User' if m.role == 'user' else 'Assistant'}: {m.content}" for m in recent]
+        return "\n".join(lines)
 
-Conversation:
-{conversation_text}
-
-Summary:"""
-        
-        response = self.llm.invoke([HumanMessage(content=summary_prompt)])
-        return response.content
-    
-    def clear(self):
-        """Clear conversation memory."""
-        self.chat_history.clear()
-    
-    def get_memory_stats(self) -> Dict[str, Any]:
-        """Get memory statistics."""
-        messages = self.chat_history.messages
+    def stats(self) -> dict:
         return {
             "session_id": self.session_id,
-            "total_messages": len(messages),
-            "user_messages": sum(1 for m in messages if m.type == "human"),
-            "ai_messages": sum(1 for m in messages if m.type == "ai"),
-            "has_summary": len(messages) >= 10
+            "total_messages": len(self.messages),
+            "user_messages": sum(1 for m in self.messages if m.role == "user"),
+            "ai_messages": sum(1 for m in self.messages if m.role == "assistant"),
+            "has_summary": len(self.messages) >= SUMMARY_THRESHOLD,
         }
+
+    def summary(self) -> str:
+        """LLM summary of the conversation. Empty for short conversations."""
+        if len(self.messages) < SUMMARY_THRESHOLD:
+            return ""
+
+        transcript = "\n".join(
+            f"{'User' if m.role == 'user' else 'Assistant'}: {m.content}" for m in self.messages
+        )
+        prompt = (
+            "Summarise this medical conversation in 2-3 sentences, covering the main "
+            "topics discussed, the medications or conditions mentioned, and any "
+            f"warnings given.\n\nConversation:\n{transcript}\n\nSummary:"
+        )
+        try:
+            completion = self._summariser().chat.completions.create(
+                model=Config.GROQ_MODEL_NAME,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                max_tokens=300,
+            )
+            return completion.choices[0].message.content or ""
+        except Exception as exc:
+            logger.warning("Summarisation failed: %s", exc)
+            return ""
+
+    def _summariser(self):
+        if self._llm is None:
+            from groq import Groq
+
+            self._llm = Groq(api_key=Config.GROQ_API_KEY)
+        return self._llm
+
+    def clear(self) -> None:
+        self.messages.clear()
 
 
 class MemoryManager:
-    """
-    Global memory manager for handling multiple conversation sessions.
-    All sessions are stored in-memory only (no disk persistence).
-    """
-    
-    _sessions: Dict[str, MedicalConversationMemory] = {}
-    
+    """LRU-bounded registry of conversation sessions."""
+
+    _sessions: OrderedDict[str, ConversationMemory] = OrderedDict()
+    _lock = threading.Lock()
+
     @classmethod
-    def get_session(cls, session_id: str = None) -> MedicalConversationMemory:
-        """Get or create a conversation session."""
-        if session_id is None:
-            # Create new session with unique ID
-            new_memory = MedicalConversationMemory()
-            session_id = new_memory.session_id
-            cls._sessions[session_id] = new_memory
-            return new_memory
-        
-        if session_id not in cls._sessions:
-            cls._sessions[session_id] = MedicalConversationMemory(session_id)
-        
-        return cls._sessions[session_id]
-    
+    def get_session(cls, session_id: str | None = None) -> ConversationMemory:
+        with cls._lock:
+            if session_id and session_id in cls._sessions:
+                cls._sessions.move_to_end(session_id)
+                return cls._sessions[session_id]
+
+            memory = ConversationMemory(session_id)
+            cls._sessions[memory.session_id] = memory
+            while len(cls._sessions) > MAX_SESSIONS:
+                evicted, _ = cls._sessions.popitem(last=False)
+                logger.info("Evicted least recently used session %s", evicted)
+            return memory
+
     @classmethod
-    def delete_session(cls, session_id: str):
-        """Delete a conversation session."""
-        if session_id in cls._sessions:
-            cls._sessions[session_id].clear()
-            del cls._sessions[session_id]
-    
+    def delete_session(cls, session_id: str) -> bool:
+        with cls._lock:
+            session = cls._sessions.pop(session_id, None)
+            if session is None:
+                return False
+            session.clear()
+            return True
+
     @classmethod
-    def list_sessions(cls) -> List[str]:
-        """List all active session IDs."""
-        return list(cls._sessions.keys())
-    
+    def list_sessions(cls) -> list[str]:
+        with cls._lock:
+            return list(cls._sessions.keys())
+
     @classmethod
-    def get_session_summary(cls, session_id: str) -> Optional[str]:
-        """Get summary for a specific session."""
-        if session_id not in cls._sessions:
-            return None
-        return cls._sessions[session_id].get_summary()
+    def reset(cls) -> None:
+        with cls._lock:
+            cls._sessions.clear()

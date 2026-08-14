@@ -1,66 +1,37 @@
-"""
-Intelligent LLM-powered query routing and optimization.
+"""LLM-powered query routing.
 
-This module uses LLM reasoning to:
-1. Classify query medical relevance and intent
-2. Determine optimal agent configuration
-3. Set dynamic iteration limits based on complexity
-4. Enable semantic caching for similar queries
+One cheap, deterministic LLM call decides how much machinery a query deserves:
+whether it is medical at all, which agents to run, how many tool iterations each
+gets, and whether the answer needs explicit chain-of-thought reasoning.
+
+Routing with a model rather than keyword matching is the point: "can I take these
+two together" and "is this combination safe" need identical handling, and no
+keyword list captures that.
+
+The router is the only component that must never hard-fail. If the routing call
+errors, `_fallback` returns a conservative configuration that runs the full crew.
 """
+
+from __future__ import annotations
 
 import json
-from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass
+import logging
+import re
+from dataclasses import asdict, dataclass
+
 from crewai import LLM
+
 from medical_agent.config import Config
-import numpy as np
+from medical_agent.utils.events import EventType, emit
 
-@dataclass
-class QueryAnalysis:
-    """Result of intelligent query analysis."""
-    is_medical: bool
-    confidence: float
-    intent: str  # 'drug_info', 'interaction', 'contraindication', 'general_medical', 'non_medical'
-    complexity: int  # 1-5 scale
-    required_agents: List[str]  # ['researcher', 'validator', 'analyst']
-    max_iterations: Dict[str, int]  # Agent-specific iteration limits
-    reasoning: str  # LLM's reasoning for decisions
-    suggested_tools: List[str]  # Recommended tools for this query
-    rejection_message: Optional[str]  # If query should be rejected
-    use_chain_of_thought: bool  # Whether to use CoT reasoning
-    cot_reasoning_steps: Optional[List[str]]  # CoT steps if applicable
+logger = logging.getLogger(__name__)
 
-
-class IntelligentRouter:
-    """LLM-powered intelligent query routing system."""
-    
-    def __init__(self):
-        """Initialize router with lightweight LLM for fast analysis."""
-        # Use Groq for fast routing decisions (70B model for smart reasoning)
-        self.routing_llm = LLM(
-            model="groq/llama-3.3-70b-versatile",
-            api_key=Config.GROQ_API_KEY,
-            temperature=0.0,  # Deterministic routing decisions
-            max_tokens=500  # Keep routing fast
-        )
-        
-        # Semantic cache for embeddings (if available)
-        self.semantic_cache = {}
-        self.cache_threshold = 0.92  # Cosine similarity threshold
-        
-    def analyze_query(self, query: str) -> QueryAnalysis:
-        """
-        Use LLM to intelligently analyze query and determine optimal routing.
-        
-        This is the AI senior's approach - let the LLM reason about the query
-        instead of using brittle keyword matching.
-        """
-        
-        prompt = f"""You are an expert medical AI system architect. Analyze this user query and determine the optimal agent configuration.
+ROUTING_PROMPT = """You are an expert medical AI system architect. Analyse this query \
+and determine the optimal agent configuration.
 
 USER QUERY: "{query}"
 
-Analyze the query and respond with ONLY valid JSON (no markdown, no explanation):
+Respond with ONLY valid JSON, no markdown and no explanation:
 
 {{
   "is_medical": true/false,
@@ -76,104 +47,141 @@ Analyze the query and respond with ONLY valid JSON (no markdown, no explanation)
   "cot_reasoning_steps": ["step1", "step2", "step3"] or null
 }}
 
-ANALYSIS GUIDELINES:
+GUIDELINES
 
-**Medical Relevance (is_medical):**
-- TRUE: Questions about drugs, medications, medical conditions, symptoms, treatments
-- FALSE: Greetings, random text, off-topic questions, tests
+is_medical:
+- true for drugs, medications, conditions, symptoms, treatments
+- false for greetings, random text, off-topic requests
 
-**Intent Classification:**
-- drug_info: General drug information (what is X, how does X work)
-- interaction: Drug-drug or drug-condition interactions
-- contraindication: When NOT to use a drug
-- side_effects: Adverse effects, safety concerns
-- dosage: Dosing information, administration
-- general_medical: Broad medical questions (disease management, symptoms)
-- non_medical: Not related to medicine
+complexity:
+1 simple definition, 2 single-drug information, 3 interaction or contraindication
+between two entities, 4 multi-drug analysis, 5 comprehensive treatment planning
 
-**Complexity (1-5 scale):**
-- 1: Simple definition ("what is aspirin")
-- 2: Single-drug information request
-- 3: Drug interactions or contraindications (2 entities)
-- 4: Multi-drug analysis or complex conditions
-- 5: Comprehensive treatment plans, multiple interacting factors
+required_agents:
+- complexity 1-2: ["researcher"]
+- complexity 3 with interaction or contraindication: ["researcher", "validator"]
+- complexity 4-5 or a comprehensive request: ["researcher", "validator", "analyst"]
 
-**Required Agents:**
-- Complexity 1-2: ["researcher"] only
-- Complexity 3 + (interaction OR contraindication): ["researcher", "validator"]
-- Complexity 4-5 OR comprehensive request: ["researcher", "validator", "analyst"]
+max_iterations (each iteration should try a DIFFERENT tool):
+- researcher: 3 at complexity 1-2, 4 at complexity 3, 5 at complexity 4-5
+- validator: 2 at complexity 1-2, 3 above
+- analyst: always 1, it synthesises and uses no tools
 
-**Max Iterations (allow tool diversity):**
-- researcher: complexity 1-2 → 3 iterations (try 2-3 different tools), complexity 3 → 4 iterations, complexity 4-5 → 5 iterations
-- validator: complexity 1-2 → 2 iterations, complexity 3+ → 3 iterations
-- analyst: always 1 iteration (synthesis, no tools)
+suggested_tools, in priority order:
+- graph_db for entities likely present in the knowledge graph
+- cypher for multi-hop questions such as interactions and contraindications
+- web_search for recent information or rare drugs
 
-**CRITICAL: Each iteration should try a DIFFERENT tool unless previous tool gave useful partial results**
+use_chain_of_thought:
+- true when complexity >= 3, several drugs or conditions are involved, or the
+  decision is safety-critical
+- false for a single straightforward lookup
+When true, give 3-5 concrete reasoning steps. When false, use null.
+"""
 
-**Suggested Tools (in priority order):**
-- graph_db: For known drugs/conditions in knowledge graph
-- cypher: For complex multi-hop queries (interactions, contraindications)
-- web_search: For latest info or rare drugs not in graph
 
-**Chain of Thought (use_chain_of_thought):**
-- TRUE if: complexity >= 3, multiple drugs/conditions, requires multi-step reasoning, safety-critical decisions
-- FALSE if: simple lookup, single entity, straightforward answer
-- Examples requiring CoT:
-  * "Can patient with X condition take drug Y and Z together?"
-  * "What's the safest painkiller for someone on blood thinners?"
-  * "Explain why drug A interacts with drug B"
-- Examples NOT requiring CoT:
-  * "What is Aspirin?"
-  * "List side effects of Ibuprofen"
+@dataclass
+class QueryAnalysis:
+    """The routing decision for one query."""
 
-**CoT Reasoning Steps (cot_reasoning_steps):**
-If use_chain_of_thought=true, provide 3-5 reasoning steps:
-Example: ["Identify all drugs mentioned", "Check each drug for contraindications", "Evaluate drug-drug interactions", "Assess combined risk level", "Formulate recommendation"]
-If use_chain_of_thought=false, set to null
+    is_medical: bool
+    confidence: float
+    intent: str
+    complexity: int
+    required_agents: list[str]
+    max_iterations: dict[str, int]
+    reasoning: str
+    suggested_tools: list[str]
+    rejection_message: str | None
+    use_chain_of_thought: bool
+    cot_reasoning_steps: list[str] | None
 
-**Rejection Message:**
-- If non-medical: Polite message explaining you handle medical queries only
-- If medical: null
+    def as_dict(self) -> dict:
+        return asdict(self)
 
-Respond with ONLY the JSON object, nothing else."""
 
-        try:
-            # Get LLM analysis
-            response = self.routing_llm.call([{"role": "user", "content": prompt}])
-            
-            # Parse response (remove markdown if present)
-            response_text = response.strip()
-            if response_text.startswith("```"):
-                # Extract JSON from markdown code block
-                response_text = response_text.split("```")[1]
-                if response_text.startswith("json"):
-                    response_text = response_text[4:]
-            
-            analysis_dict = json.loads(response_text)
-            
-            # Convert to dataclass
-            return QueryAnalysis(
-                is_medical=analysis_dict["is_medical"],
-                confidence=analysis_dict["confidence"],
-                intent=analysis_dict["intent"],
-                complexity=analysis_dict["complexity"],
-                required_agents=analysis_dict["required_agents"],
-                max_iterations=analysis_dict["max_iterations"],
-                reasoning=analysis_dict["reasoning"],
-                suggested_tools=analysis_dict["suggested_tools"],
-                rejection_message=analysis_dict.get("rejection_message"),
-                use_chain_of_thought=analysis_dict.get("use_chain_of_thought", False),
-                cot_reasoning_steps=analysis_dict.get("cot_reasoning_steps")
+def _extract_json(text: str) -> dict:
+    """Parse the model's JSON, tolerating code fences and surrounding prose."""
+    cleaned = text.strip()
+    fenced = re.search(r"```(?:json)?\s*(.*?)\s*```", cleaned, re.DOTALL)
+    if fenced:
+        cleaned = fenced.group(1)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        braces = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if braces:
+            return json.loads(braces.group(0))
+        raise
+
+
+class IntelligentRouter:
+    def __init__(self) -> None:
+        self._llm: LLM | None = None
+
+    @property
+    def llm(self) -> LLM:
+        if self._llm is None:
+            self._llm = LLM(
+                model=f"groq/{Config.GROQ_MODEL_NAME}",
+                api_key=Config.GROQ_API_KEY,
+                temperature=0.0,  # routing must be reproducible
+                max_tokens=500,
             )
-            
-        except Exception as e:
-            # Fallback to safe defaults if LLM fails
-            print(f"⚠️  Router LLM failed: {e}, using safe defaults")
-            return self._fallback_analysis(query)
-    
-    def _fallback_analysis(self, query: str) -> QueryAnalysis:
-        """Safe fallback if LLM routing fails."""
-        # Conservative approach - assume it's medical and needs all agents
+        return self._llm
+
+    def analyze_query(self, query: str) -> QueryAnalysis:
+        try:
+            raw = self.llm.call([{"role": "user", "content": ROUTING_PROMPT.format(query=query)}])
+            analysis = self._parse(_extract_json(raw))
+        except Exception as exc:
+            logger.warning("Routing failed (%s); using conservative defaults", exc)
+            analysis = self._fallback()
+
+        emit(
+            EventType.ROUTER_COMPLETED,
+            is_medical=analysis.is_medical,
+            intent=analysis.intent,
+            complexity=analysis.complexity,
+            confidence=analysis.confidence,
+            required_agents=analysis.required_agents,
+            suggested_tools=analysis.suggested_tools,
+            use_chain_of_thought=analysis.use_chain_of_thought,
+            reasoning=analysis.reasoning,
+        )
+        return analysis
+
+    @staticmethod
+    def _parse(data: dict) -> QueryAnalysis:
+        complexity = max(1, min(5, int(data.get("complexity", 3))))
+        agents = data.get("required_agents") or ["researcher"]
+        iterations = data.get("max_iterations") or {}
+        return QueryAnalysis(
+            is_medical=bool(data.get("is_medical", True)),
+            confidence=float(data.get("confidence", 0.5)),
+            intent=str(data.get("intent", "general_medical")),
+            complexity=complexity,
+            required_agents=[a for a in agents if a in {"researcher", "validator", "analyst"}]
+            or ["researcher"],
+            max_iterations={
+                "researcher": int(iterations.get("researcher", 3)),
+                "validator": int(iterations.get("validator", 2)),
+                "analyst": int(iterations.get("analyst", 1)),
+            },
+            reasoning=str(data.get("reasoning", "")),
+            suggested_tools=data.get("suggested_tools") or ["graph_db", "web_search"],
+            rejection_message=data.get("rejection_message"),
+            use_chain_of_thought=bool(data.get("use_chain_of_thought", False)),
+            cot_reasoning_steps=data.get("cot_reasoning_steps"),
+        )
+
+    @staticmethod
+    def _fallback() -> QueryAnalysis:
+        """Conservative configuration used when routing itself fails.
+
+        Assumes the query is medical and runs the full crew: a wasted crew run is
+        cheaper than wrongly rejecting a legitimate clinical question.
+        """
         return QueryAnalysis(
             is_medical=True,
             confidence=0.5,
@@ -181,62 +189,19 @@ Respond with ONLY the JSON object, nothing else."""
             complexity=3,
             required_agents=["researcher", "validator", "analyst"],
             max_iterations={"researcher": 3, "validator": 2, "analyst": 1},
-            reasoning="Fallback routing due to LLM error - using conservative defaults",
+            reasoning="Routing model unavailable; conservative defaults applied.",
             suggested_tools=["graph_db", "cypher", "web_search"],
             rejection_message=None,
             use_chain_of_thought=False,
-            cot_reasoning_steps=None
+            cot_reasoning_steps=None,
         )
-    
-    def check_semantic_cache(self, query: str, embedding: Optional[np.ndarray] = None) -> Optional[str]:
-        """
-        Check if semantically similar query exists in cache.
-        
-        This is smarter than exact match - catches rephrased questions.
-        Example: "aspirin side effects" and "what are adverse effects of aspirin" 
-        would be cache hits despite different wording.
-        """
-        if not embedding or not self.semantic_cache:
-            return None
-        
-        # Find most similar cached query
-        max_similarity = 0
-        best_match = None
-        
-        for cached_query, (cached_embedding, cached_response) in self.semantic_cache.items():
-            similarity = self._cosine_similarity(embedding, cached_embedding)
-            if similarity > max_similarity:
-                max_similarity = similarity
-                best_match = cached_response
-        
-        if max_similarity >= self.cache_threshold:
-            print(f"📦 Semantic cache hit! Similarity: {max_similarity:.3f}")
-            return best_match
-        
-        return None
-    
-    def add_to_semantic_cache(self, query: str, embedding: np.ndarray, response: str):
-        """Add query-response pair to semantic cache."""
-        self.semantic_cache[query] = (embedding, response)
-        
-        # Limit cache size (keep 100 most recent)
-        if len(self.semantic_cache) > 100:
-            # Remove oldest entry
-            oldest_key = list(self.semantic_cache.keys())[0]
-            del self.semantic_cache[oldest_key]
-    
-    @staticmethod
-    def _cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
-        """Calculate cosine similarity between two vectors."""
-        return np.dot(vec1, vec2) / (np.linalg.norm(vec1) * np.linalg.norm(vec2))
 
 
-# Global router instance (singleton)
-_router_instance = None
+_router: IntelligentRouter | None = None
+
 
 def get_router() -> IntelligentRouter:
-    """Get or create global router instance."""
-    global _router_instance
-    if _router_instance is None:
-        _router_instance = IntelligentRouter()
-    return _router_instance
+    global _router
+    if _router is None:
+        _router = IntelligentRouter()
+    return _router
