@@ -97,10 +97,15 @@ class QueryRequest(BaseModel):
 
 
 def _caller(request: Request) -> str:
-    return client_key(
-        request.headers.get("x-forwarded-for"),
-        request.client.host if request.client else None,
+    forwarded = request.headers.get("x-forwarded-for")
+    key = client_key(forwarded, request.client.host if request.client else None)
+    # Logged at DEBUG so TRUSTED_PROXY_HOPS can be checked against a real request
+    # without a deploy. If this key is a proxy's address rather than a visitor's,
+    # the hop count is too low and every visitor is sharing one allowance.
+    logger.debug(
+        "caller=%s forwarded=%r hops=%d", key, forwarded, Config.TRUSTED_PROXY_HOPS
     )
+    return key
 
 
 def _enforce_quota(request: Request, query: str):

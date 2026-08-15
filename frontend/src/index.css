@@ -1,6 +1,7 @@
 @import 'tailwindcss';
 
 @theme {
+  /* --- Console: the machine's own surface --- */
   --color-surface: oklch(0.16 0.01 260);
   --color-surface-raised: oklch(0.2 0.012 260);
   --color-surface-sunken: oklch(0.13 0.01 260);
@@ -12,6 +13,36 @@
   --color-ok: oklch(0.75 0.15 155);
   --color-warn: oklch(0.78 0.15 75);
   --color-danger: oklch(0.68 0.19 25);
+
+  /* --- Landing: pharmacy label stock ---
+     Green-cast rather than the usual paper cream, borrowed from the subject
+     rather than chosen for warmth: surgical drapes are dyed this because it
+     sits opposite blood red in the eye. */
+  --color-drape: oklch(0.955 0.014 168);
+  --color-drape-deep: oklch(0.918 0.021 168);
+  --color-drape-edge: oklch(0.856 0.028 168);
+  --color-graphite: oklch(0.245 0.024 172);
+  --color-graphite-soft: oklch(0.468 0.018 172);
+  --color-graphite-faint: oklch(0.598 0.016 172);
+  /* Methylene blue: a stain and a drug, and the one spot colour on the page. */
+  --color-methylene: oklch(0.44 0.155 262);
+  --color-methylene-wash: oklch(0.9 0.04 262);
+  /* Reserved for the interaction warning and the spent allowance. */
+  --color-flag: oklch(0.535 0.17 32);
+
+  /* --- The dark inset the landing cuts into that stock --- */
+  --color-scope: oklch(0.185 0.021 176);
+  --color-scope-raised: oklch(0.232 0.022 176);
+  --color-scope-line: oklch(0.325 0.022 176);
+  --color-scope-ink: oklch(0.93 0.018 170);
+  --color-scope-dim: oklch(0.615 0.02 172);
+  --color-signal: oklch(0.8 0.15 165);
+  /* The flag colour lightened to stay legible on the inset's dark ground. */
+  --color-scope-flag: oklch(0.735 0.16 38);
+
+  --font-display: 'Fraunces', 'Iowan Old Style', Georgia, serif;
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', monospace;
 }
 
 html,
@@ -21,16 +52,63 @@ body,
 }
 
 body {
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The console fills the viewport and scrolls its own panes. */
+body[data-view='console'] {
   background-color: var(--color-surface);
   color: var(--color-ink);
-  font-feature-settings: 'cv02', 'cv03', 'cv04';
-  -webkit-font-smoothing: antialiased;
+}
+
+/* The landing is a document, so it scrolls like one. */
+body[data-view='landing'],
+body[data-view='landing'] #root {
+  height: auto;
+  min-height: 100%;
+  background-color: var(--color-drape);
+  color: var(--color-graphite);
+}
+
+/* Ink rather than the accent, so the ring stays visible on the primary button -
+   which is itself methylene. Colour is set longhand: in the `outline` shorthand
+   the colour slot is dropped and falls back to currentColor. */
+body[data-view='landing'] :focus-visible {
+  outline: 2px solid;
+  outline-color: var(--color-graphite);
+  outline-offset: 3px;
+}
+
+/* Inside the monitor the ground is dark, so ink would disappear. */
+body[data-view='landing'] figure :focus-visible {
+  outline-color: var(--color-signal);
+}
+
+body[data-view='console'] :focus-visible {
+  outline: 2px solid;
+  outline-color: var(--color-accent);
+  outline-offset: 2px;
 }
 
 /* Subtle scrollbars so the two panes do not compete with the content. */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--color-line) transparent;
+}
+
+body[data-view='landing'] * {
+  scrollbar-color: var(--color-drape-edge) transparent;
+}
+
+/* Fraunces ships a wonk axis that swaps in the eccentric glyph shapes. On at
+   display sizes, where it reads as a voice rather than a defect. */
+.display {
+  font-family: var(--font-display);
+  font-variation-settings:
+    'opsz' 144,
+    'SOFT' 0,
+    'WONK' 1;
+  letter-spacing: -0.021em;
 }
 
 @keyframes pulse-dot {
@@ -45,6 +123,29 @@ body {
 
 .animate-dot {
   animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+/* One line of a recorded run arriving in the monitor. */
+@keyframes monitor-line-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.4rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.monitor-line {
+  animation: monitor-line-in 0.34s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-dot,
+  .monitor-line {
+    animation: none;
+  }
 }
 
 .prose-answer {

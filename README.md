@@ -3,10 +3,11 @@
 Multi-agent clinical question answering over a temporal knowledge graph, with the
 reasoning pipeline streamed to the browser as it runs.
 
-[Live demo](https://medical-agent-ui.onrender.com) · [API docs](https://medical-agent-api.onrender.com/docs)
+[Live demo](https://medical-agent-ui.onrender.com) · [API docs](https://medical-agent-api-xvy2.onrender.com/docs)
 
-The demo caps each visitor at five queries per day. The example questions are
-pre-computed and exempt from that limit.
+The landing page opens the console with one button and no sign-up. Each visitor
+is capped at five queries per day. The example questions are pre-computed and
+exempt from that limit.
 
 ---
 
@@ -124,6 +125,20 @@ idle. Graph access goes through a gateway that tracks availability and refuses t
 retry inside a cooldown window, so one paused database cannot add a connection
 timeout to every request. When it is down, tools return an explicit signal and the
 agents answer from web search while saying that graph verification was unavailable.
+
+**Guest access counted by address, not by browser.** There are no accounts: the
+landing page mints a local identifier so a visitor's questions form one
+conversation, and that is all it does. The daily allowance is counted server-side
+against the caller's address, so clearing site data or opening a private window
+starts a new conversation rather than a new allowance. Behind a proxy that address
+can only come from `X-Forwarded-For`, which the caller also writes — every proxy
+*appends* the address it saw, so the left-most entry is whatever the client chose
+to send, and reading it let a forged header mint an unused allowance per fake
+address. `TRUSTED_PROXY_HOPS` says how many proxies sit in front of the service,
+and the key is taken that many entries from the right, where the caller cannot
+reach. It has to match the real topology: too high trusts forged entries again,
+too low collapses every visitor onto one proxy address and makes them share a
+single allowance.
 
 **A static frontend, deliberately.** Render Static Sites consume none of the 750
 free instance-hours, which leaves the entire budget for the API. It also means the

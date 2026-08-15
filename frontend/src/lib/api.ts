@@ -9,7 +9,12 @@
 
 import type { Quota, TraceEvent } from '../types/events'
 
-const BASE = (import.meta.env.VITE_API_URL ?? 'http://localhost:8000').replace(/\/$/, '')
+export const API_BASE = (import.meta.env.VITE_API_URL ?? 'http://localhost:8000').replace(
+  /\/$/,
+  '',
+)
+
+const BASE = API_BASE
 
 export interface HealthResponse {
   status: string

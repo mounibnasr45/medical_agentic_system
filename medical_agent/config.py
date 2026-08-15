@@ -91,6 +91,14 @@ class Config:
     # Per-IP queries per UTC day, protecting LLM spend on a public demo.
     DAILY_QUERY_LIMIT = _int("DAILY_QUERY_LIMIT", 5)
 
+    # How many proxies sit in front of this service. The quota counts against the
+    # caller's address, which behind a proxy can only come from X-Forwarded-For -
+    # a header the caller writes. Only the entries our own proxies appended are
+    # trustworthy, and this says how many that is. Render terminates TLS at one
+    # proxy, hence 1. Set 0 when the service is exposed directly, which ignores
+    # the header and counts against the socket peer.
+    TRUSTED_PROXY_HOPS = _int("TRUSTED_PROXY_HOPS", 1)
+
     # When false, the graph layer is skipped entirely and agents run on web + LLM.
     GRAPH_ENABLED = _bool("GRAPH_ENABLED", True)
 

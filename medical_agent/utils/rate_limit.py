@@ -92,16 +92,39 @@ class DailyRateLimiter:
             self._day = self._today()
 
 
-def client_key(forwarded_for: str | None, fallback: str | None) -> str:
+def client_key(
+    forwarded_for: str | None,
+    fallback: str | None,
+    trusted_hops: int | None = None,
+) -> str:
     """Identify the caller.
 
-    Render terminates TLS at a proxy, so the socket peer is always the proxy. The
-    left-most X-Forwarded-For entry is the original client.
+    Render terminates TLS at a proxy, so the socket peer is always the proxy and
+    the client address has to come from `X-Forwarded-For`. That header is written
+    by the caller: each proxy *appends* the address it saw, so everything to the
+    left of our own proxies' entries is whatever the client chose to send. Reading
+    the left-most entry - the obvious choice, and the one this used to make - lets
+    a visitor mint an unused daily allowance per forged address.
+
+    Counting `trusted_hops` from the right lands on the address the outermost
+    proxy we control actually observed, which the caller cannot influence. The
+    setting has to match the real topology: too high trusts forged entries again,
+    too low collapses every visitor onto one proxy address and makes them share a
+    single allowance.
     """
-    if forwarded_for:
-        first = forwarded_for.split(",")[0].strip()
-        if first:
-            return first
+    hops = Config.TRUSTED_PROXY_HOPS if trusted_hops is None else trusted_hops
+
+    if hops <= 0:
+        # Nothing in front of us, so the header is pure caller input.
+        return fallback or "unknown"
+
+    entries = [entry.strip() for entry in (forwarded_for or "").split(",")]
+    entries = [entry for entry in entries if entry]
+    if entries:
+        # A chain shorter than configured means the request did not pass through
+        # every expected proxy. Clamping to the left-most entry keeps the closest
+        # thing to a client address the header carries.
+        return entries[max(0, len(entries) - hops)]
     return fallback or "unknown"
 
 

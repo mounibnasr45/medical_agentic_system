@@ -3,15 +3,27 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
     <meta
       name="description"
       content="Multi-agent clinical question answering over a temporal knowledge graph, with a live view of routing, agent activation and tool calls."
     />
     <title>Medical Agent</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT,WONK@9..144,400..700,0..100,0..1&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+    />
   </head>
-  <body>
+  <body data-view="landing">
     <div id="root"></div>
+    <script>
+      // The landing page and the console sit on opposite grounds. Reading the
+      // route here rather than waiting for React stops a deep link to the
+      // console flashing the landing page's paper first.
+      if (location.hash === '#/console') document.body.dataset.view = 'console'
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
